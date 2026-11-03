@@ -1,2 +1,34 @@
-# textDark
-About the textDark program This is a lightweight text editor that supports various text file types and features its own proprietary format, .txtd. Created by mrsiktyyy, with the assistance of free ChatGPT and Gemini AI.
+# textDark 2.0.3
+
+Тёмный редактор текста и кода на PySide6 с меню Файл, Правка, Формат, Вставка, Вид, Инструменты и Справка.
+
+## Возможности
+- Вкладки и несколько открытых документов.
+- Нумерация строк, текущая строка, базовая подсветка синтаксиса.
+- Автозакрытие скобок и кавычек, базовый автоотступ.
+- Открытие обычных текстовых и исходных файлов UTF-8.
+- Формат `.txtd`: AES-256-GCM, автоматическое шифрование/расшифровка, без пароля.
+- Автовосстановление несохранённого текста в локальной папке приложения.
+- Только тёмная тема.
+
+## Важно о защите `.txtd`
+Все копии textDark используют общий встроенный ключ. Это позволяет любому пользователю приложения открывать файлы без пароля и обмениваться ими напрямую. Файлы не читаются как обычный текст. Однако ключ можно извлечь из самого приложения при целенаправленном анализе EXE, поэтому `.txtd` не подходит для секретных данных против технически подготовленного атакующего. Не отправляйте через него пароли и особо конфиденциальную информацию.
+
+## Запуск из исходников
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
+```
+
+## Сборка одного EXE (Windows)
+Положите `logo.png` рядом с `main.py` (если нужна иконка), затем:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\build.ps1
+```
+Готовый файл: `dist\textDark.exe`. Для сборки нужен интернет, чтобы установить зависимости. Полученный EXE предназначен для Windows x64.
+
+
+Build script note: `scripts/build.ps1` contains ASCII-only text to avoid Windows PowerShell encoding/parser issues.
