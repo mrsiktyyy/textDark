@@ -1,4 +1,4 @@
-import os, sys, json, base64, secrets, traceback
+import os, sys, json, base64, secrets, traceback, re, hashlib, html as html_lib
 from pathlib import Path
 from datetime import datetime
 
@@ -6,26 +6,33 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from PySide6.QtCore import (
     Qt, QRect, QRectF, QPointF, QPoint, QSize, QTimer, QSettings, QObject, QEvent, QUrl,
+    QByteArray, QBuffer, QIODevice,
     QEasingCurve, QPropertyAnimation, QParallelAnimationGroup, QVariantAnimation, Signal
 )
 from PySide6.QtGui import (
     QAction, QColor, QFont, QPainter, QPainterPath, QPen, QPalette, QTextFormat,
     QSyntaxHighlighter, QTextCharFormat, QKeySequence, QTextCursor, QImage, QPixmap,
-    QDesktopServices
+    QDesktopServices, QIcon, QTextImageFormat, QTextTableFormat, QTextTableCellFormat,
+    QTextLength, QTextBlockFormat, QTextListFormat, QTextDocument
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPlainTextEdit, QFileDialog,
     QMessageBox, QTabWidget, QTabBar, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStatusBar, QToolBar, QToolButton, QAbstractButton, QFontComboBox, QSpinBox,
     QSplitter, QInputDialog, QFontDialog, QDialog, QDialogButtonBox, QLineEdit,
-    QMenu, QGridLayout, QSlider, QGraphicsScene, QGraphicsPixmapItem, QGraphicsBlurEffect
+    QMenu, QGridLayout, QSlider, QGraphicsScene, QGraphicsPixmapItem, QGraphicsBlurEffect,
+    QTextEdit, QComboBox, QTabWidget as QSettingsTabs, QCheckBox, QScrollArea, QFormLayout,
+    QKeySequenceEdit, QSystemTrayIcon, QSplashScreen, QFrame
 )
 
 APP_NAME = "textDark"
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 # !!! ЗАМЕНИТЕ на ссылку на вашу страницу релизов на GitHub !!!
 GITHUB_URL = "https://github.com/mrsiktyyy/textDark/releases"
 MAGIC = b"TEXTDARK\x02"
+RICH_DOC_PREFIX = "TEXTDARK_RICH_HTML_V1\n"
+STYLE_PROGRAMMING = "programming"
+STYLE_NOTEBOOK = "notebook"
 # Convenience encryption for a closed, non-public app distribution.
 # Anyone who can reverse-engineer this application can potentially recover this key.
 APP_KEY = bytes.fromhex(
@@ -88,6 +95,11 @@ def default_editor_font():
     font.setPointSize(11)
     return font
 
+def default_notebook_font():
+    font = QFont("Segoe UI", 12)
+    font.setStyleHint(QFont.SansSerif)
+    return font
+
 def mix_color(c1, c2, t):
     a, b = QColor(c1), QColor(c2)
     return QColor(int(a.red() + (b.red() - a.red()) * t),
@@ -110,6 +122,73 @@ def decrypt_text(data: bytes) -> str:
         return AESGCM(APP_KEY).decrypt(nonce, payload, MAGIC).decode("utf-8")
     except Exception as exc:
         raise ValueError("Не удалось расшифровать файл: файл повреждён или создан несовместимой версией textDark.") from exc
+
+def current_editor_style():
+    value = str(QSettings("textDark", "textDark").value("editor_style", STYLE_PROGRAMMING))
+    return value if value in (STYLE_PROGRAMMING, STYLE_NOTEBOOK) else STYLE_PROGRAMMING
+
+def editor_block_count(editor):
+    return editor.blockCount() if hasattr(editor, "blockCount") else editor.document().blockCount()
+
+def _image_to_png_data(image):
+    if isinstance(image, QPixmap):
+        image = image.toImage()
+    if not isinstance(image, QImage) or image.isNull():
+        return None
+    data = QByteArray()
+    buffer = QBuffer(data)
+    if not buffer.open(QIODevice.WriteOnly):
+        return None
+    image.save(buffer, "PNG")
+    buffer.close()
+    return bytes(data.toBase64()).decode("ascii")
+
+def serialize_rich_html(editor):
+    """Сохраняет ресурсы вставленных изображений прямо внутри HTML-документа."""
+    result = editor.document().toHtml()
+    pattern = re.compile("src=([\"'])(.*?)\\1", re.IGNORECASE)
+    def replace_image(match):
+        src = html_lib.unescape(match.group(2))
+        if not src.startswith("textdark://image/"):
+            return match.group(0)
+        resource = editor.document().resource(QTextDocument.ImageResource, QUrl(src))
+        encoded = _image_to_png_data(resource)
+        if not encoded:
+            return match.group(0)
+        return f'{match.group(0)[:5]}data:image/png;base64,{encoded}{match.group(1)}'
+    return pattern.sub(replace_image, result)
+
+def load_rich_html(editor, source):
+    """Поднимает встроенные PNG-ресурсы обратно в QTextDocument."""
+    images = []
+    pattern = re.compile("src=([\"])data:image/[^;]+;base64,([^'\"]+)\\1", re.IGNORECASE)
+    def replace_image(match):
+        try:
+            image = QImage.fromData(base64.b64decode(match.group(2), validate=True))
+            if image.isNull():
+                return match.group(0)
+            url = f"textdark://image/restored-{len(images)}.png"
+            images.append((url, image))
+            return f'src="{url}"'
+        except Exception:
+            return match.group(0)
+    html_text = pattern.sub(replace_image, source)
+    editor.setHtml(html_text)
+    for url, image in images:
+        editor.document().addResource(QTextDocument.ImageResource, QUrl(url), image)
+    editor.document().markContentsDirty(0, max(1, editor.document().characterCount()))
+    editor.document().adjustSize()
+    editor.viewport().update()
+
+def rich_html_to_plain_text(source):
+    document = QTextDocument()
+    document.setHtml(source)
+    return document.toPlainText()
+
+def serialize_tab(tab):
+    if getattr(tab, "style", STYLE_PROGRAMMING) == STYLE_NOTEBOOK:
+        return RICH_DOC_PREFIX + serialize_rich_html(tab.editor)
+    return tab.editor.toPlainText()
 
 def apply_theme(app):
     """Fusion + тёмная палитра: диалоги, списки и поля ввода автоматически становятся тёмными."""
@@ -242,8 +321,9 @@ def unregister_default_app():
     except OSError:
         pass
     _delete_tree(r"Software\Classes\textDark.File")
+    # Не удаляем Software\textDark целиком: там же хранятся пользовательские
+    # параметры QSettings (масштаб, шрифт, фон и выбранный режим редактора).
     _delete_tree(r"Software\textDark\Capabilities")
-    _delete_tree(r"Software\textDark")
     _notify_shell()
 
 def open_default_apps_settings():
@@ -768,6 +848,8 @@ class CodeHighlighter(QSyntaxHighlighter):
                 self.setCurrentBlockState(0)
 
 class Editor(QPlainTextEdit):
+    zoomRequested = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.gutter = LineNumberArea(self)
@@ -796,9 +878,13 @@ class Editor(QPlainTextEdit):
         self.gutter.update()
 
     def wheelEvent(self, event):
-        super().wheelEvent(event)
         if event.modifiers() & Qt.ControlModifier:
-            self.refresh_metrics()
+            delta = event.angleDelta().y()
+            if delta:
+                self.zoomRequested.emit(1 if delta > 0 else -1)
+                event.accept()
+                return
+        super().wheelEvent(event)
 
     def line_number_width(self):
         digits = len(str(max(1, self.blockCount())))
@@ -893,17 +979,46 @@ class Editor(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
-# Qt's extra-selection class is exported from QtWidgets.
-from PySide6.QtWidgets import QTextEdit
+# Qt's extra-selection class is exported from QTextEdit.
 QTextEditExtraSelection = QTextEdit.ExtraSelection
 
+class NotebookEditor(QTextEdit):
+    """Редактор обычных документов: форматирование, изображения, таблицы и списки."""
+    zoomRequested = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptRichText(True)
+        self.setUndoRedoEnabled(True)
+        self.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.viewport().setAutoFillBackground(False)
+        self.setFont(default_notebook_font())
+        self._zoom_level_applied = 0
+
+    def refresh_metrics(self):
+        # Общий интерфейс с программным редактором; отдельный gutter здесь не нужен.
+        return
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta:
+                self.zoomRequested.emit(1 if delta > 0 else -1)
+                event.accept()
+                return
+        super().wheelEvent(event)
+
 class DocumentTab(QWidget):
-    def __init__(self, path=None, text=""):
+    def __init__(self, path=None, text="", rich_html=None, style=None):
         super().__init__()
         self.path = Path(path) if path else None
         self.modified = False
-        self.editor = Editor()
-        self.editor.setPlainText(text)
+        self.style = style or current_editor_style()
+        self.editor = self._create_editor(self.style)
+        if rich_html is not None and self.style == STYLE_NOTEBOOK:
+            load_rich_html(self.editor, rich_html)
+        else:
+            self.editor.setPlainText(text)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.editor)
@@ -911,6 +1026,9 @@ class DocumentTab(QWidget):
         self.set_highlighter()
         self.veil = FadeVeil(self)
         get_background().changed.connect(self._bg_changed)
+
+    def _create_editor(self, style):
+        return Editor() if style == STYLE_PROGRAMMING else NotebookEditor()
 
     def _bg_changed(self):
         self.update()
@@ -933,14 +1051,41 @@ class DocumentTab(QWidget):
         self.modified = value
 
     def set_highlighter(self):
-        ext = self.path.suffix if self.path else ""
-        self.editor.highlighter = CodeHighlighter(self.editor.document(), ext)
+        if isinstance(self.editor, Editor):
+            ext = self.path.suffix if self.path else ""
+            self.editor.highlighter = CodeHighlighter(self.editor.document(), ext)
+        else:
+            self.editor.highlighter = None
+
+    def switch_style(self, style):
+        if style == self.style:
+            return
+        old = self.editor
+        old_text = old.toPlainText()
+        old_font = old.font()
+        old_cursor = old.textCursor()
+        old_position = old_cursor.position()
+        new = self._create_editor(style)
+        new.setPlainText(old_text)
+        new.setFont(old_font)
+        cursor = new.textCursor()
+        cursor.setPosition(min(old_position, max(0, new.document().characterCount() - 1)))
+        new.setTextCursor(cursor)
+        new.document().modificationChanged.connect(self._modified)
+        self.layout().replaceWidget(old, new)
+        old.setParent(None)
+        old.deleteLater()
+        self.editor = new
+        self.style = style
+        self.set_highlighter()
+        # Режим меняет тип документа; просим сохранить преобразованный вариант.
+        self.editor.document().setModified(True)
 
     @property
     def title(self):
         return self.path.name if self.path else "Безымянный"
 
-# ───────────────────────── Настройки ─────────────────────────
+
 class BgPreview(QWidget):
     """Живой предпросмотр фона вместе с примером текста."""
     def __init__(self, bg, parent=None):
@@ -984,26 +1129,71 @@ class BgPreview(QWidget):
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_window = parent
         self.bg = get_background()
-        self.setWindowTitle("Настройки")
-        self.setMinimumWidth(560)
+        self.setWindowTitle("Настройки textDark")
+        self.setMinimumSize(680, 570)
         enable_dialog_animation(self)
-
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 22)
+        root.setContentsMargins(26, 22, 26, 20)
         root.setSpacing(12)
-
         title = QLabel("Настройки")
         title.setObjectName("DlgTitle")
         root.addWidget(title)
 
+        self.pages = QSettingsTabs()
+        root.addWidget(self.pages, 1)
+        self._build_general_page()
+        self._build_advanced_page()
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        done = QPushButton("Готово")
+        done.setDefault(True)
+        done.clicked.connect(self.apply_and_close)
+        buttons.addWidget(done)
+        root.addLayout(buttons)
+
+        self._blur_timer = QTimer(self)
+        self._blur_timer.setSingleShot(True)
+        self._blur_timer.setInterval(140)
+        self._blur_timer.timeout.connect(lambda: self.bg.set_blur(self.s_blur.value()))
+        self.choose_btn.clicked.connect(self.choose_image)
+        self.clear_btn.clicked.connect(self.clear_image)
+        self.s_transp.valueChanged.connect(self.bg.set_transparency)
+        self.s_dim.valueChanged.connect(self.bg.set_dim)
+        self.s_blur.valueChanged.connect(lambda _v: self._blur_timer.start())
+        if sys.platform == "win32":
+            self.switch.set_checked_silent(is_default_app_registered())
+            self.switch.toggled.connect(self._toggle_default)
+        else:
+            self.switch.setEnabled(False)
+        self._refresh_system_hint()
+        self._refresh_enabled()
+
+    def _build_general_page(self):
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(16, 14, 16, 12)
+        root.setSpacing(10)
+        root.addWidget(self._section("Стиль редактора"))
+        self.style_combo = QComboBox()
+        self.style_combo.addItem("Программирование — номера строк и подсветка кода", STYLE_PROGRAMMING)
+        self.style_combo.addItem("Блокнот — форматированный текст, картинки и таблицы", STYLE_NOTEBOOK)
+        current = current_editor_style()
+        self.style_combo.setCurrentIndex(max(0, self.style_combo.findData(current)))
+        root.addWidget(self.style_combo)
+        style_hint = QLabel("Режим «Программирование» сохраняет привычный редактор кода. Режим «Блокнот» поддерживает форматирование, изображения и таблицы.")
+        style_hint.setObjectName("Hint")
+        style_hint.setWordWrap(True)
+        root.addWidget(style_hint)
+        root.addSpacing(4)
         root.addWidget(self._section("Фон приложения"))
         hint = QLabel("Изображение отображается позади текста в окне редактора.")
         hint.setObjectName("Hint")
         root.addWidget(hint)
         self.preview = BgPreview(self.bg)
         root.addWidget(self.preview)
-
         buttons = QHBoxLayout()
         self.choose_btn = QPushButton("Выбрать изображение...")
         self.clear_btn = QPushButton("Убрать фон")
@@ -1011,7 +1201,6 @@ class SettingsDialog(QDialog):
         buttons.addWidget(self.clear_btn)
         buttons.addStretch(1)
         root.addLayout(buttons)
-
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(10)
@@ -1020,9 +1209,15 @@ class SettingsDialog(QDialog):
         self.s_dim, self.l_dim = self._slider(grid, 1, "Затемнение", 0, 95, self.bg.dim, "%")
         self.s_blur, self.l_blur = self._slider(grid, 2, "Размытие (блюр)", 0, 40, self.bg.blur, " px")
         root.addLayout(grid)
-        root.addSpacing(6)
+        root.addStretch(1)
+        self.pages.addTab(page, "Общие")
 
-        root.addWidget(self._section("Система"))
+    def _build_advanced_page(self):
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(16, 14, 16, 12)
+        root.setSpacing(10)
+        root.addWidget(self._section("Системные настройки"))
         row = QHBoxLayout()
         column = QVBoxLayout()
         column.setSpacing(2)
@@ -1037,32 +1232,40 @@ class SettingsDialog(QDialog):
         self.switch = ToggleSwitch()
         row.addWidget(self.switch, 0, Qt.AlignVCenter)
         root.addLayout(row)
-        root.addSpacing(8)
-
-        done = QPushButton("Готово")
-        done.setDefault(True)
-        done.clicked.connect(self.accept)
-        root.addWidget(done, 0, Qt.AlignRight)
-
-        # Размытие считается дольше остальных настроек, поэтому применяем его с небольшой задержкой.
-        self._blur_timer = QTimer(self)
-        self._blur_timer.setSingleShot(True)
-        self._blur_timer.setInterval(140)
-        self._blur_timer.timeout.connect(lambda: self.bg.set_blur(self.s_blur.value()))
-
-        self.choose_btn.clicked.connect(self.choose_image)
-        self.clear_btn.clicked.connect(self.clear_image)
-        self.s_transp.valueChanged.connect(self.bg.set_transparency)
-        self.s_dim.valueChanged.connect(self.bg.set_dim)
-        self.s_blur.valueChanged.connect(lambda _v: self._blur_timer.start())
-
-        if sys.platform == "win32":
-            self.switch.set_checked_silent(is_default_app_registered())
-            self.switch.toggled.connect(self._toggle_default)
-        else:
-            self.switch.setEnabled(False)
-        self._refresh_system_hint()
-        self._refresh_enabled()
+        root.addWidget(self._section("Сворачивание в трей"))
+        self.tray_check = QCheckBox("При нажатии на крестик сворачивать textDark в системный трей")
+        self.tray_check.setChecked(bool(self.parent_window.settings.value("minimize_to_tray", False, type=bool)))
+        if sys.platform != "win32" or not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_check.setEnabled(False)
+            self.tray_check.setToolTip("Системный трей недоступен в этой среде Windows.")
+        root.addWidget(self.tray_check)
+        tray_hint = QLabel("Приложение продолжит работать в фоне. Полностью закрыть его можно через значок textDark в трее.")
+        tray_hint.setObjectName("Hint")
+        tray_hint.setWordWrap(True)
+        root.addWidget(tray_hint)
+        root.addWidget(self._section("Свои сочетания клавиш"))
+        shortcut_hint = QLabel("Нажми на поле и задай новое сочетание. Пустое поле отключает комбинацию. Изменения применятся после нажатия «Готово».")
+        shortcut_hint.setObjectName("Hint")
+        shortcut_hint.setWordWrap(True)
+        root.addWidget(shortcut_hint)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        shortcut_widget = QWidget()
+        form = QFormLayout(shortcut_widget)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.shortcut_edits = []
+        for label, action in self.parent_window.shortcut_actions:
+            edit = QKeySequenceEdit(action.shortcut())
+            edit.setMaximumSequenceLength(2)
+            form.addRow(label, edit)
+            self.shortcut_edits.append((action, edit))
+        scroll.setWidget(shortcut_widget)
+        root.addWidget(scroll, 1)
+        reset = QPushButton("Сбросить сочетания по умолчанию")
+        reset.clicked.connect(self.reset_shortcuts)
+        root.addWidget(reset, 0, Qt.AlignRight)
+        self.pages.addTab(page, "Расширенные")
 
     def _section(self, text):
         label = QLabel(text)
@@ -1090,8 +1293,7 @@ class SettingsDialog(QDialog):
             widget.setEnabled(enabled)
 
     def choose_image(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Выбор фона", "",
-                                              "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;Все файлы (*.*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Выбор фона", "", "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;Все файлы (*.*)")
         if not path:
             return
         if not self.bg.set_image(path):
@@ -1110,7 +1312,7 @@ class SettingsDialog(QDialog):
         elif is_default_app_registered():
             self.sys_hint.setText("textDark зарегистрирован. Осталось выбрать его в окне Windows «Приложения по умолчанию».")
         else:
-            self.sys_hint.setText("Заменяет Блокнот: textDark откроет .txt, .log, .md, .json и другие текстовые файлы, а также .txtd.")
+            self.sys_hint.setText("Регистрирует textDark для открытия .txt, .log, .md, .json и других текстовых файлов, а также .txtd.")
 
     def _toggle_default(self, checked):
         try:
@@ -1130,6 +1332,39 @@ class SettingsDialog(QDialog):
             self.switch.set_checked_silent(is_default_app_registered())
             self._refresh_system_hint()
 
+    def reset_shortcuts(self):
+        for action, edit in self.shortcut_edits:
+            default = self.parent_window.shortcut_defaults.get(action.objectName(), "")
+            edit.setKeySequence(QKeySequence(default))
+
+    def apply_and_close(self):
+        # Не допускаем случайного назначения одного сочетания нескольким командам.
+        assignments = {}
+        conflicts = []
+        for action, edit in self.shortcut_edits:
+            sequence = edit.keySequence()
+            value = sequence.toString(QKeySequence.PortableText)
+            if not value:
+                continue
+            if value in assignments:
+                conflicts.append(f"{value}: {assignments[value]} и {action.text()}")
+            else:
+                assignments[value] = action.text()
+        if conflicts:
+            msg_warn(self, "Повторяющиеся сочетания клавиш",
+                     "Одно сочетание назначено нескольким действиям. Измени повторы:\n\n" + "\n".join(conflicts))
+            return
+
+        new_style = self.style_combo.currentData()
+        if not self.parent_window.set_editor_style(new_style):
+            self.style_combo.setCurrentIndex(max(0, self.style_combo.findData(current_editor_style())))
+        self.parent_window.settings.setValue("minimize_to_tray", self.tray_check.isChecked())
+        self.parent_window.configure_tray(self.tray_check.isChecked())
+        for action, edit in self.shortcut_edits:
+            self.parent_window.update_shortcut(action, edit.keySequence())
+        self.accept()
+
+
 class TextDark(QMainWindow):
     def __init__(self, initial_file=None):
         super().__init__()
@@ -1137,10 +1372,22 @@ class TextDark(QMainWindow):
         self._saved_font = self._load_saved_font()
         self._titlebar_done = False
         self._fade_anim = None
+        self._really_quit = False
+        self.tray_icon = None
+        self.zoom_level = self._read_zoom_level()
+        self.action_map = {}
+        self.shortcut_actions = []
+        self.shortcut_defaults = {}
         self.setWindowTitle("textDark - Текстовый редактор")
         self._set_app_icon()
         self.resize(1180, 780)
         self.setMinimumSize(760, 520)
+        geometry = self.settings.value("window_geometry")
+        if geometry:
+            try:
+                self.restoreGeometry(geometry)
+            except Exception:
+                pass
         self.setWindowOpacity(0.0)   # плавное появление окна стартует в showEvent
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -1153,6 +1400,8 @@ class TextDark(QMainWindow):
         self.setCentralWidget(self.tabs)
         self._build_ui()
         self._apply_style()
+        self._apply_shortcut_overrides()
+        self._apply_mode_menus()
         if not initial_file:
             self.new_tab()
         self.autosave_timer = QTimer(self)
@@ -1160,6 +1409,8 @@ class TextDark(QMainWindow):
         self.autosave_timer.start(45000)
         if initial_file:
             self.open_file(initial_file)
+        if bool(self.settings.value("minimize_to_tray", False, type=bool)):
+            self.configure_tray(True)
 
     def current_tab(self):
         w = self.tabs.currentWidget()
@@ -1206,6 +1457,12 @@ class TextDark(QMainWindow):
         except Exception:
             pass
 
+    def _read_zoom_level(self):
+        try:
+            return max(-5, min(24, int(self.settings.value("zoom_level", 0))))
+        except (TypeError, ValueError):
+            return 0
+
     def _load_saved_font(self):
         value = self.settings.value("editor_font", "")
         if value:
@@ -1216,7 +1473,24 @@ class TextDark(QMainWindow):
 
     def _apply_saved_font(self, editor):
         if self._saved_font is not None:
-            editor.setFont(self._saved_font)
+            base = QFont(self._saved_font)
+        elif isinstance(editor, NotebookEditor):
+            base = default_notebook_font()
+        else:
+            base = default_editor_font()
+        if isinstance(editor, NotebookEditor):
+            base.setPointSize(max(6, min(48, base.pointSize())))
+            editor.setFont(base)
+            applied = int(getattr(editor, "_zoom_level_applied", 0))
+            delta = self.zoom_level - applied
+            if delta > 0:
+                editor.zoomIn(delta)
+            elif delta < 0:
+                editor.zoomOut(-delta)
+            editor._zoom_level_applied = self.zoom_level
+        else:
+            base.setPointSize(max(6, min(48, base.pointSize() + self.zoom_level)))
+            editor.setFont(base)
 
     def _build_ui(self):
         bar = self.menuBar()
@@ -1225,39 +1499,55 @@ class TextDark(QMainWindow):
             ("Открыть...", self.open_dialog, "Ctrl+O"), ("Открыть в новом окне...", self.open_in_new_window, "Ctrl+Shift+O"),
             None, ("Сохранить", self.save, "Ctrl+S"), ("Сохранить как...", self.save_as, "Ctrl+Shift+S"),
             ("Сохранить копию...", self.save_copy, None), ("Экспорт в TXT", self.export_txt, None),
-            None, ("Печать...", self.print_document, "Ctrl+P"), ("Предпросмотр печати...", self.print_preview, None),
-            ("Открыть папку файла", self.open_file_folder, None), None,
-            ("Настройки...", self.open_settings, "Ctrl+,"), ("Выход", self.close, "Alt+F4")])
+            None, ("Настройки...", self.open_settings, "Ctrl+,"), ("Открыть папку файла", self.open_file_folder, None),
+            ("Выход", self.exit_from_tray, None)])
         self._make_menu(bar, "Правка", [
             ("Отменить", lambda: self.run_editor("undo"), "Ctrl+Z"), ("Повторить", lambda: self.run_editor("redo"), "Ctrl+Y"),
             None, ("Вырезать", lambda: self.run_editor("cut"), "Ctrl+X"), ("Копировать", lambda: self.run_editor("copy"), "Ctrl+C"),
             ("Вставить", lambda: self.run_editor("paste"), "Ctrl+V"), ("Вставить без форматирования", self.paste_plain, "Ctrl+Shift+V"),
             ("Удалить выделенное", self.delete_selection, "Delete"), ("Выделить всё", lambda: self.run_editor("selectAll"), "Ctrl+A"),
-            None, ("Найти...", self.find_text, "Ctrl+F"), ("Заменить...", self.replace_text, "Ctrl+H"), ("Перейти к строке...", self.goto_line, "Ctrl+G"),
-            None, ("Выделить строку", self.select_line, None), ("Дублировать строку", self.duplicate_line, "Ctrl+D"),
+            None, ("Найти...", self.find_text, "Ctrl+F"), ("Заменить...", self.replace_text, "Ctrl+H"),
+            ("Перейти к строке...", self.goto_line, "Ctrl+G"), None,
+            ("Выделить строку", self.select_line, None), ("Дублировать строку", self.duplicate_line, "Ctrl+D"),
             ("Удалить строку", self.delete_line, None), ("Переместить строку вверх", lambda: self.move_line(-1), "Alt+Up"),
             ("Переместить строку вниз", lambda: self.move_line(1), "Alt+Down"), ("Удалить пустые строки", self.remove_empty_lines, None),
             None, ("Сделать строки ПРОПИСНЫМИ", lambda: self.transform_selection(str.upper), None),
             ("Сделать строки строчными", lambda: self.transform_selection(str.lower), None),
             ("Начать Каждое Слово С Заглавной", lambda: self.transform_selection(str.title), None),
             ("Обратить регистр", self.swap_case, None), ("Повторить последнее действие", self.repeat_last_action, "Ctrl+Shift+R")])
-        self._make_menu(bar, "Формат", [("Шрифт...", self.choose_font, None), ("Жирный", lambda: self.toggle_format("bold"), "Ctrl+B"),
+        self._make_menu(bar, "Формат", [
+            ("Шрифт...", self.choose_font, None), ("Жирный", lambda: self.toggle_format("bold"), "Ctrl+B"),
             ("Курсив", lambda: self.toggle_format("italic"), "Ctrl+I"), ("Подчёркнутый", lambda: self.toggle_format("underline"), "Ctrl+U"),
-            ("Зачёркнутый", lambda: self.toggle_format("strike"), None)])
-        self._make_menu(bar, "Вставка", [("Дата", lambda: self.insert_text(datetime.now().strftime("%d.%m.%Y")), None),
-            ("Время", lambda: self.insert_text(datetime.now().strftime("%H:%M:%S")), None), ("Разделитель", lambda: self.insert_text("\n────────────────────────\n"), None),
-            ("Символ...", self.insert_symbol, None), ("Эмодзи...", self.insert_emoji, None), ("Путь к файлу...", self.insert_file_path, None), ("Ссылка...", self.insert_link, None)])
-        self._make_menu(bar, "Вид", [("Увеличить масштаб", lambda: self.zoom(1), "Ctrl++"), ("Уменьшить масштаб", lambda: self.zoom(-1), "Ctrl+-"),
+            ("Зачёркнутый", lambda: self.toggle_format("strike"), None), None,
+            ("Заголовок", self.format_heading, None), ("Цитата", self.format_quote, None),
+            ("Маркированный список", lambda: self.insert_list(QTextListFormat.ListDisc), None),
+            ("Нумерованный список", lambda: self.insert_list(QTextListFormat.ListDecimal), None),
+            ("Очистить форматирование", self.clear_formatting, None)])
+        self._make_menu(bar, "Вставка", [
+            ("Дата", lambda: self.insert_text(datetime.now().strftime("%d.%m.%Y")), None),
+            ("Время", lambda: self.insert_text(datetime.now().strftime("%H:%M:%S")), None),
+            ("Разделитель", self.insert_separator, None),
+            ("Символ...", self.insert_symbol, None), ("Эмодзи...", self.insert_emoji, None),
+            ("Путь к файлу...", self.insert_file_path, None), ("Ссылка...", self.insert_link, None),
+            None, ("Вставить изображение...", self.insert_image, None), ("Вставить таблицу...", self.insert_table, None),
+            ("Объединить ячейки", self.merge_table_cells, None), ("Разделить ячейку", self.split_table_cell, None),
+            ("Добавить строку ниже", self.add_table_row, None), ("Добавить столбец справа", self.add_table_column, None),
+            ("Удалить строку таблицы", self.delete_table_row, None), ("Удалить столбец таблицы", self.delete_table_column, None),
+            ("Убрать вертикальные линии выделения", lambda: self.set_table_inner_borders("vertical", False), None),
+            ("Убрать горизонтальные линии выделения", lambda: self.set_table_inner_borders("horizontal", False), None),
+            ("Вернуть границы выделения", lambda: self.set_table_inner_borders("all", True), None)])
+        self._make_menu(bar, "Вид", [
+            ("Увеличить масштаб", lambda: self.zoom(1), "Ctrl+="), ("Уменьшить масштаб", lambda: self.zoom(-1), "Ctrl+-"),
             ("Сбросить масштаб", self.reset_zoom, "Ctrl+0"), ("Полноэкранный режим", self.toggle_fullscreen, "F11")])
-        self._make_menu(bar, "Инструменты", [("Статистика документа", self.document_stats, None), ("Количество слов", self.word_count, None),
-            ("Количество символов", self.char_count, None), ("Количество строк", self.line_count, None), ("Очистить документ", self.clear_document, None),
-            ("Вставить содержимое буфера", lambda: self.insert_text(QApplication.clipboard().text()), None), ("Проверить скобки", self.check_brackets, None),
-            ("Удалить дубли строк", self.remove_duplicate_lines, None), ("Перевернуть строки", self.reverse_lines, None),
-            ("Открыть папку резервных копий", self.open_backup_folder, None)])
-        self._make_menu(bar, "Справка", [("Сочетания клавиш", self.show_shortcuts, None),
-            ("Сайт / Скачать", self.open_website, None), ("О программе textDark", self.about, None)])
+        self._make_menu(bar, "Инструменты", [
+            ("Статистика документа", self.document_stats, None), ("Очистить документ", self.clear_document, None),
+            ("Вставить содержимое буфера", lambda: self.insert_text(QApplication.clipboard().text()), None),
+            ("Проверить скобки", self.check_brackets, None), ("Удалить дубли строк", self.remove_duplicate_lines, None),
+            ("Перевернуть строки", self.reverse_lines, None), ("Открыть папку резервных копий", self.open_backup_folder, None)])
+        self._make_menu(bar, "Справка", [
+            ("Сочетания клавиш", self.show_shortcuts, None), ("Сайт / Скачать", self.open_website, None),
+            ("О программе textDark", self.about, None)])
 
-        # Кнопка «+» справа от вкладок (как в браузере).
         corner = QWidget()
         corner_layout = QHBoxLayout(corner)
         corner_layout.setContentsMargins(6, 0, 12, 0)
@@ -1271,7 +1561,6 @@ class TextDark(QMainWindow):
         corner_layout.addWidget(add_btn)
         self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
 
-        # Строка состояния: сообщения слева, сведения о документе справа.
         self.status = QStatusBar()
         self.status.setSizeGripEnabled(False)
         self.setStatusBar(self.status)
@@ -1287,15 +1576,179 @@ class TextDark(QMainWindow):
         bar.addMenu(menu)
         for item in items:
             if item is None:
-                menu.addSeparator(); continue
+                menu.addSeparator()
+                continue
             label, callback, shortcut = item
             action = QAction(label, self)
+            action.setObjectName("action_" + hashlib.sha1(label.encode("utf-8")).hexdigest()[:12])
             action.triggered.connect(callback)
             if shortcut:
-                action.setShortcut(QKeySequence(shortcut))
+                sequence = QKeySequence(shortcut)
+                action.setShortcut(sequence)
                 action.setShortcutContext(Qt.WindowShortcut)
+            self.action_map[label] = action
+            self.shortcut_actions.append((label, action))
+            self.shortcut_defaults[action.objectName()] = action.shortcut().toString(QKeySequence.PortableText)
             menu.addAction(action)
         return menu
+
+    def _apply_shortcut_overrides(self):
+        for _label, action in self.shortcut_actions:
+            value = self.settings.value("shortcuts/" + action.objectName(), None)
+            if value is not None:
+                action.setShortcut(QKeySequence(str(value)))
+
+    def update_shortcut(self, action, sequence):
+        action.setShortcut(sequence)
+        key = "shortcuts/" + action.objectName()
+        value = sequence.toString(QKeySequence.PortableText)
+        default = self.shortcut_defaults.get(action.objectName(), "")
+        if value == default:
+            self.settings.remove(key)
+        else:
+            self.settings.setValue(key, value)
+
+    def _apply_mode_menus(self):
+        style = current_editor_style()
+        programming_only = {
+            "Перейти к строке...", "Выделить строку", "Дублировать строку", "Удалить строку",
+            "Переместить строку вверх", "Переместить строку вниз", "Удалить пустые строки",
+            "Сделать строки ПРОПИСНЫМИ", "Сделать строки строчными", "Начать Каждое Слово С Заглавной",
+            "Обратить регистр", "Проверить скобки", "Удалить дубли строк", "Перевернуть строки"
+        }
+        notebook_only = {
+            "Заголовок", "Цитата", "Маркированный список", "Нумерованный список", "Очистить форматирование",
+            "Вставить изображение...", "Вставить таблицу...", "Объединить ячейки", "Разделить ячейку", "Добавить строку ниже",
+            "Добавить столбец справа", "Удалить строку таблицы", "Удалить столбец таблицы",
+            "Убрать вертикальные линии выделения", "Убрать горизонтальные линии выделения", "Вернуть границы выделения"
+        }
+        for label, action in self.action_map.items():
+            if label in programming_only:
+                action.setVisible(style == STYLE_PROGRAMMING)
+                action.setEnabled(style == STYLE_PROGRAMMING)
+            elif label in notebook_only:
+                action.setVisible(style == STYLE_NOTEBOOK)
+                action.setEnabled(style == STYLE_NOTEBOOK)
+
+        # Скрываем пустые разделители, которые могли остаться после фильтрации меню.
+        for menu_action in self.menuBar().actions():
+            menu = menu_action.menu()
+            if menu is None:
+                continue
+            actions = menu.actions()
+            previous_content = False
+            for index, action in enumerate(actions):
+                if not action.isSeparator():
+                    if action.isVisible():
+                        previous_content = True
+                    continue
+                next_content = any(
+                    not candidate.isSeparator() and candidate.isVisible()
+                    for candidate in actions[index + 1:]
+                )
+                action.setVisible(previous_content and next_content)
+                previous_content = False
+
+    def set_editor_style(self, style):
+        if style not in (STYLE_PROGRAMMING, STYLE_NOTEBOOK):
+            return False
+        old_style = current_editor_style()
+        if style == old_style:
+            return True
+        if style == STYLE_PROGRAMMING and any(
+            isinstance(self.tabs.widget(i), DocumentTab) and self.tabs.widget(i).style == STYLE_NOTEBOOK
+            for i in range(self.tabs.count())
+        ):
+            answer = msg_question(
+                self, "Переключение в режим программирования",
+                "В режиме программирования нет форматирования, изображений и таблиц.\n"
+                "При переключении эти элементы будут преобразованы в обычный текст. Продолжить?",
+                QMessageBox.Yes | QMessageBox.Cancel
+            )
+            if answer != QMessageBox.Yes:
+                return False
+        self.settings.setValue("editor_style", style)
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if isinstance(tab, DocumentTab):
+                tab.switch_style(style)
+                self._connect_tab_signals(tab)
+                self._apply_saved_font(tab.editor)
+        self._apply_mode_menus()
+        self.status.showMessage("Стиль редактора: " + ("Программирование" if style == STYLE_PROGRAMMING else "Блокнот"), 3500)
+        self.update_status()
+        return True
+
+    def _connect_tab_signals(self, tab):
+        tab.editor.textChanged.connect(lambda t=tab: self.update_tab_title(t))
+        tab.editor.document().modificationChanged.connect(lambda _m, t=tab: self.update_tab_title(t))
+        tab.editor.cursorPositionChanged.connect(self.update_status)
+        tab.editor.zoomRequested.connect(self.zoom)
+
+    def configure_tray(self, enabled):
+        if not enabled:
+            if self.tray_icon is not None:
+                self.tray_icon.hide()
+                self.tray_icon.deleteLater()
+                self.tray_icon = None
+            return
+        if sys.platform != "win32" or not QSystemTrayIcon.isSystemTrayAvailable():
+            self.settings.setValue("minimize_to_tray", False)
+            return
+        if self.tray_icon is not None:
+            return
+        icon = self.windowIcon()
+        if icon.isNull():
+            icon = QIcon(str(resource_path("logo.png") or ""))
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        tray_menu = QMenu(self)
+        open_action = tray_menu.addAction("Открыть textDark")
+        open_action.triggered.connect(self.restore_from_tray)
+        tray_menu.addSeparator()
+        exit_action = tray_menu.addAction("Выход")
+        exit_action.triggered.connect(self.exit_from_tray)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+        self.tray_icon.setToolTip("textDark 3.2")
+        self.tray_icon.show()
+
+    def _tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.DoubleClick, QSystemTrayIcon.Trigger):
+            self.restore_from_tray()
+
+    def restore_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def exit_from_tray(self):
+        windows = [w for w in QApplication.topLevelWidgets() if isinstance(w, TextDark)]
+        # Сначала проверяем все документы, чтобы отмена выхода не закрыла другие окна.
+        for window in windows:
+            for index in reversed(range(window.tabs.count())):
+                tab = window.tabs.widget(index)
+                if not isinstance(tab, DocumentTab) or not tab.editor.document().isModified():
+                    continue
+                window.tabs.setCurrentIndex(index)
+                answer = msg_question(
+                    window, "Выход",
+                    f"Сохранить изменения в «{tab.title}»?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+                )
+                if answer == QMessageBox.Cancel:
+                    self.restore_from_tray()
+                    return
+                if answer == QMessageBox.Save:
+                    window.save()
+                    if tab.editor.document().isModified():
+                        self.restore_from_tray()
+                        return
+                else:
+                    tab.editor.document().setModified(False)
+        for window in windows:
+            window._really_quit = True
+            window.close()
+        QApplication.quit()
 
     # ── кнопки закрытия вкладок ──
     def _attach_close(self, index):
@@ -1356,7 +1809,8 @@ class TextDark(QMainWindow):
         if path:
             target = Path(path)
             try:
-                payload = tab.editor.toPlainText().encode("utf-8") if target.suffix.lower() != ".txtd" else encrypt_text(tab.editor.toPlainText())
+                content = serialize_tab(tab) if target.suffix.lower() == ".txtd" else tab.editor.toPlainText()
+                payload = encrypt_text(content) if target.suffix.lower() == ".txtd" else content.encode("utf-8")
                 target.write_bytes(payload)
                 self.status.showMessage(f"Копия сохранена: {target.name}", 3500)
             except Exception as exc:
@@ -1367,18 +1821,6 @@ class TextDark(QMainWindow):
         if not tab: return
         path, _ = QFileDialog.getSaveFileName(self, "Экспорт в TXT", str((tab.path or Path("Документ")).stem + ".txt"), "Текстовые файлы (*.txt)")
         if path: Path(path).write_text(tab.editor.toPlainText(), encoding="utf-8")
-
-    def print_document(self):
-        from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-        printer = QPrinter(QPrinter.HighResolution)
-        if QPrintDialog(printer, self).exec(): self.current_editor().print(printer)
-
-    def print_preview(self):
-        from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
-        printer = QPrinter(QPrinter.HighResolution)
-        preview = QPrintPreviewDialog(printer, self)
-        preview.paintRequested.connect(lambda p: self.current_editor().print(p))
-        preview.exec()
 
     def open_file_folder(self):
         tab = self.current_tab()
@@ -1394,17 +1836,33 @@ class TextDark(QMainWindow):
         if e and e.textCursor().hasSelection(): e.textCursor().removeSelectedText()
 
     def replace_text(self):
-        e=self.current_editor()
-        if not e: return
-        old, ok=ask_text(self,"Заменить","Найти:")
-        if not ok or not old: return
-        new, ok=ask_text(self,"Заменить","Заменить на:")
-        if ok: e.setPlainText(e.toPlainText().replace(old,new))
+        editor = self.current_editor()
+        if not editor:
+            return
+        old, ok = ask_text(self, "Заменить", "Найти:")
+        if not ok or not old:
+            return
+        new, ok = ask_text(self, "Заменить", "Заменить на:")
+        if not ok:
+            return
+        document = editor.document()
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        replaced = 0
+        while True:
+            found = document.find(old, cursor)
+            if found.isNull():
+                break
+            found.insertText(new)
+            cursor = found
+            replaced += 1
+        cursor.endEditBlock()
+        self.status.showMessage(f"Заменено: {replaced}", 3000)
 
     def goto_line(self):
         e=self.current_editor()
         if not e: return
-        n,ok=ask_int(self,"Перейти к строке","Номер строки:",1,1,e.blockCount())
+        n,ok=ask_int(self,"Перейти к строке","Номер строки:",1,1,editor_block_count(e))
         if ok:
             c=e.textCursor(); c.movePosition(QTextCursor.Start); c.movePosition(QTextCursor.Down,QTextCursor.MoveAnchor,n-1); e.setTextCursor(c)
 
@@ -1466,7 +1924,7 @@ class TextDark(QMainWindow):
             self._saved_font = font
             self.settings.setValue("editor_font", font.toString())
             for i in range(self.tabs.count()):
-                self.tabs.widget(i).editor.setFont(font)
+                self._apply_saved_font(self.tabs.widget(i).editor)
             self.status.showMessage(f"Шрифт: {font.family()}, {font.pointSize()} pt", 3500)
 
     def toggle_format(self, kind):
@@ -1481,38 +1939,256 @@ class TextDark(QMainWindow):
         c.mergeCharFormat(fmt); e.mergeCurrentCharFormat(fmt)
 
     def zoom(self, amount):
+        self.zoom_level = max(-5, min(24, self.zoom_level + int(amount)))
+        self.settings.setValue("zoom_level", self.zoom_level)
         for i in range(self.tabs.count()):
-            ed = self.tabs.widget(i).editor
-            if amount > 0:
-                ed.zoomIn(amount)
-            else:
-                ed.zoomOut(-amount)
-            ed.refresh_metrics()
+            self._apply_saved_font(self.tabs.widget(i).editor)
+
     def reset_zoom(self):
+        self.zoom_level = 0
+        self.settings.setValue("zoom_level", 0)
         for i in range(self.tabs.count()):
-            ed = self.tabs.widget(i).editor
-            font = ed.font(); font.setPointSize(11); ed.setFont(font)
+            self._apply_saved_font(self.tabs.widget(i).editor)
     def toggle_fullscreen(self): self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
+    def open_windows_emoji_panel(self):
+        if sys.platform != "win32":
+            msg_info(self, "Эмодзи и символы", "Панель Win + . доступна в Windows 10/11.")
+            return
+        editor = self.current_editor()
+        if editor:
+            editor.setFocus()
+        def send_hotkey():
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                VK_LWIN, VK_OEM_PERIOD, KEYEVENTF_KEYUP = 0x5B, 0xBE, 0x0002
+                user32.keybd_event(VK_LWIN, 0, 0, 0)
+                user32.keybd_event(VK_OEM_PERIOD, 0, 0, 0)
+                user32.keybd_event(VK_OEM_PERIOD, 0, KEYEVENTF_KEYUP, 0)
+                user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
+            except Exception as exc:
+                msg_warn(self, "Не удалось открыть панель", str(exc))
+        QTimer.singleShot(140, send_hotkey)
+
     def insert_symbol(self):
-        value,ok=ask_text(self,"Символ","Введите символ:")
-        if ok: self.insert_text(value)
+        self.open_windows_emoji_panel()
+
     def insert_emoji(self):
-        value,ok=ask_text(self,"Эмодзи","Вставьте эмодзи:")
-        if ok: self.insert_text(value)
+        self.open_windows_emoji_panel()
+
+    def insert_separator(self):
+        editor = self.current_editor()
+        if isinstance(editor, NotebookEditor):
+            editor.textCursor().insertHtml("<hr/>")
+        else:
+            self.insert_text("\n────────────────────────\n")
+
+    def insert_image(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor):
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Вставить изображение", "", "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+        if not path:
+            return
+        image = QImage(path)
+        if image.isNull():
+            msg_warn(self, "Изображение", "Не удалось открыть выбранное изображение.")
+            return
+        name = "textdark://image/" + secrets.token_hex(12) + ".png"
+        editor.document().addResource(QTextDocument.ImageResource, QUrl(name), image)
+        image_format = QTextImageFormat()
+        image_format.setName(name)
+        max_width = max(240, editor.viewport().width() - 50)
+        target_width = min(image.width(), max_width)
+        scaled = image.scaled(target_width, target_width, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image_format.setWidth(scaled.width())
+        image_format.setHeight(scaled.height())
+        cursor = editor.textCursor()
+        cursor.insertImage(image_format)
+        editor.setTextCursor(cursor)
+
+    def insert_table(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor):
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Новая таблица")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        rows = QSpinBox(); rows.setRange(1, 50); rows.setValue(3)
+        columns = QSpinBox(); columns.setRange(1, 20); columns.setValue(3)
+        borders = QCheckBox("Показывать границы ячеек"); borders.setChecked(True)
+        header = QCheckBox("Первая строка — заголовок"); header.setChecked(True)
+        form.addRow("Строки:", rows)
+        form.addRow("Столбцы:", columns)
+        layout.addLayout(form)
+        layout.addWidget(borders)
+        layout.addWidget(header)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if not dialog.exec():
+            return
+        table_format = QTextTableFormat()
+        table_format.setCellPadding(8)
+        table_format.setCellSpacing(0)
+        table_format.setBorder(1.0 if borders.isChecked() else 0.0)
+        table_format.setBorderBrush(QColor(BORDER))
+        table_format.setBorderCollapse(True)
+        table_format.setWidth(QTextLength(QTextLength.PercentageLength, 100))
+        table = editor.textCursor().insertTable(rows.value(), columns.value(), table_format)
+        if header.isChecked():
+            for col in range(columns.value()):
+                cell_cursor = table.cellAt(0, col).firstCursorPosition()
+                fmt = QTextCharFormat(); fmt.setFontWeight(QFont.Bold)
+                cell_cursor.mergeCharFormat(fmt)
+                cell_cursor.insertText(f"Столбец {col + 1}")
+        editor.setTextCursor(table.cellAt(0, 0).firstCursorPosition())
+
+    def _table_context(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor):
+            return None
+        cursor = editor.textCursor()
+        table = cursor.currentTable()
+        if table is None:
+            msg_info(self, "Таблица", "Поставь курсор в ячейку таблицы или выдели нужные ячейки.")
+            return None
+        first_row, num_rows, first_col, num_cols = cursor.selectedTableCells()
+        if num_rows <= 0 or num_cols <= 0:
+            cell = table.cellAt(cursor)
+            first_row, num_rows = cell.row(), 1
+            first_col, num_cols = cell.column(), 1
+        return editor, cursor, table, first_row, num_rows, first_col, num_cols
+
+    def merge_table_cells(self):
+        data = self._table_context()
+        if not data: return
+        _editor, cursor, table, row, rows, col, cols = data
+        if rows < 1 or cols < 1 or (rows == 1 and cols == 1):
+            msg_info(self, "Объединение ячеек", "Сначала выдели несколько соседних ячеек таблицы.")
+            return
+        table.mergeCells(row, col, rows, cols)
+
+    def split_table_cell(self):
+        data = self._table_context()
+        if not data:
+            return
+        _editor, _cursor, table, row, _rows, col, _cols = data
+        cell = table.cellAt(row, col)
+        if cell.rowSpan() > 1 or cell.columnSpan() > 1:
+            table.splitCell(row, col, cell.rowSpan(), cell.columnSpan())
+        else:
+            msg_info(self, "Разделить ячейку", "Эта ячейка не была объединена с другими.")
+
+    def add_table_row(self):
+        data = self._table_context()
+        if data:
+            _editor, _cursor, table, row, _rows, _col, _cols = data
+            table.insertRows(row + 1, 1)
+
+    def add_table_column(self):
+        data = self._table_context()
+        if data:
+            _editor, _cursor, table, _row, _rows, col, _cols = data
+            table.insertColumns(col + 1, 1)
+
+    def delete_table_row(self):
+        data = self._table_context()
+        if data:
+            _editor, _cursor, table, row, _rows, _col, _cols = data
+            if table.rows() > 1: table.removeRows(row, 1)
+
+    def delete_table_column(self):
+        data = self._table_context()
+        if data:
+            _editor, _cursor, table, _row, _rows, col, _cols = data
+            if table.columns() > 1: table.removeColumns(col, 1)
+
+    def set_table_inner_borders(self, direction, restore):
+        data = self._table_context()
+        if not data:
+            return
+        _editor, _cursor, table, row, rows, col, cols = data
+        width = 1.0 if restore else 0.0
+        for r in range(row, row + rows):
+            for c in range(col, col + cols):
+                cell = table.cellAt(r, c)
+                fmt = cell.format()
+                if direction in ("vertical", "all"):
+                    if c > col:
+                        fmt.setLeftBorder(width)
+                        fmt.setLeftBorderBrush(QColor(BORDER))
+                    if c < col + cols - 1:
+                        fmt.setRightBorder(width)
+                        fmt.setRightBorderBrush(QColor(BORDER))
+                if direction in ("horizontal", "all"):
+                    if r > row:
+                        fmt.setTopBorder(width)
+                        fmt.setTopBorderBrush(QColor(BORDER))
+                    if r < row + rows - 1:
+                        fmt.setBottomBorder(width)
+                        fmt.setBottomBorderBrush(QColor(BORDER))
+                cell.setFormat(fmt)
+
+    def insert_list(self, style):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor): return
+        cursor = editor.textCursor()
+        cursor.createList(style)
+        editor.setTextCursor(cursor)
+
+    def format_heading(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor): return
+        cursor = editor.textCursor()
+        block_format = cursor.blockFormat()
+        block_format.setHeadingLevel(1 if block_format.headingLevel() == 0 else 0)
+        cursor.setBlockFormat(block_format)
+        char_format = QTextCharFormat()
+        char_format.setFontPointSize(18 if block_format.headingLevel() else editor.font().pointSize())
+        char_format.setFontWeight(QFont.Bold if block_format.headingLevel() else QFont.Normal)
+        cursor.mergeCharFormat(char_format)
+
+    def format_quote(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor): return
+        cursor = editor.textCursor()
+        fmt = cursor.blockFormat()
+        fmt.setLeftMargin(24 if fmt.leftMargin() < 20 else 0)
+        fmt.setRightMargin(12 if fmt.rightMargin() < 10 else 0)
+        cursor.setBlockFormat(fmt)
+
+    def clear_formatting(self):
+        editor = self.current_editor()
+        if not isinstance(editor, NotebookEditor): return
+        cursor = editor.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.WordUnderCursor)
+        cursor.setCharFormat(QTextCharFormat())
+        cursor.setBlockFormat(QTextBlockFormat())
+        editor.setTextCursor(cursor)
+
     def insert_file_path(self):
         path,_=QFileDialog.getOpenFileName(self,"Выбрать файл")
         if path: self.insert_text(path)
     def insert_link(self):
-        value,ok=ask_text(self,"Ссылка","URL:","https://")
-        if ok: self.insert_text(value)
+        value, ok = ask_text(self, "Ссылка", "URL:", "https://")
+        if not ok or not value:
+            return
+        editor = self.current_editor()
+        if isinstance(editor, NotebookEditor):
+            label, label_ok = ask_text(self, "Текст ссылки", "Как показать ссылку?", value)
+            if not label_ok:
+                return
+            editor.textCursor().insertHtml(f'<a href="{html_lib.escape(value, quote=True)}">{html_lib.escape(label)}</a>')
+        else:
+            self.insert_text(value)
 
     def document_stats(self):
         t=self._editor_text(); words=len(t.split()); chars=len(t); lines=len(t.splitlines()) or 1
         msg_info(self,"Статистика документа",f"Слов: {words}\nСимволов: {chars}\nСтрок: {lines}")
-    def word_count(self): msg_info(self,"Количество слов",str(len(self._editor_text().split())))
-    def char_count(self): msg_info(self,"Количество символов",str(len(self._editor_text())))
-    def line_count(self): msg_info(self,"Количество строк",str(len(self._editor_text().splitlines()) or 1))
     def clear_document(self):
         if msg_question(self,"Очистить документ","Удалить весь текст?")==QMessageBox.Yes and self.current_editor(): self.current_editor().clear()
     def check_brackets(self):
@@ -1530,7 +2206,16 @@ class TextDark(QMainWindow):
         elif sys.platform=="darwin": subprocess.Popen(["open",str(folder)])
         else: subprocess.Popen(["xdg-open",str(folder)])
     def show_shortcuts(self):
-        msg_info(self,"Сочетания клавиш","Ctrl+N — создать\nCtrl+O — открыть\nCtrl+S — сохранить\nCtrl+Shift+S — сохранить как\nCtrl+Z / Ctrl+Y — отменить / повторить\nCtrl+X / C / V — вырезать / копировать / вставить\nCtrl+F — найти\nCtrl+H — заменить\nCtrl+G — перейти к строке\nCtrl+A — выделить всё\nCtrl+B / I / U — жирный / курсив / подчёркнутый\nCtrl+, — настройки\nF11 — полный экран\nCtrl+0 — сброс масштаба")
+        lines = []
+        for label, action in self.shortcut_actions:
+            sequence = action.shortcut().toString(QKeySequence.NativeText)
+            if sequence:
+                lines.append(f"{sequence} — {label}")
+        lines.extend([
+            "Ctrl + колесо мыши — масштаб",
+            "Win + . — эмодзи и символы Windows",
+        ])
+        msg_info(self, "Сочетания клавиш", "\n".join(lines) if lines else "Сочетания не назначены.")
     def about(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("О программе textDark")
@@ -1618,8 +2303,9 @@ class TextDark(QMainWindow):
 
         /* Редактор: шрифт НЕ задаём здесь, иначе QSS перекроет выбор шрифта.
            Фон прозрачный: его рисует вкладка (цвет или изображение из настроек). */
-        QPlainTextEdit { background:transparent; color:@text; border:0; padding:8px 0 0 0;
+        QPlainTextEdit, QTextEdit { background:transparent; color:@text; border:0; padding:8px 0 0 0;
                          selection-background-color:rgba(255, 90, 31, 95); selection-color:#ffffff; }
+        QKeySequenceEdit { background:@editor; color:@text; border:1px solid @border; border-radius:8px; padding:4px; }
 
         /* Строка состояния */
         QStatusBar { background:@bg; color:@muted; border-top:1px solid @border; padding:2px 8px; }
@@ -1680,9 +2366,7 @@ class TextDark(QMainWindow):
         self._attach_close(idx)
         self._apply_saved_font(tab.editor)
         self.tabs.setCurrentIndex(idx)
-        tab.editor.textChanged.connect(lambda t=tab: self.update_tab_title(t))
-        tab.editor.document().modificationChanged.connect(lambda _m, t=tab: self.update_tab_title(t))
-        tab.editor.cursorPositionChanged.connect(self.update_status)
+        self._connect_tab_signals(tab)
         self.update_tab_title(tab)
 
     def update_tab_title(self, tab):
@@ -1708,7 +2392,7 @@ class TextDark(QMainWindow):
             kind = ext[1:].upper()
         else:
             kind = "Обычный текст"
-        self.lbl_kind.setText(f"{kind} · {tab.editor.blockCount()} строк")
+        self.lbl_kind.setText(f"{kind} · {editor_block_count(tab.editor)} строк")
 
     def run_editor(self, method):
         e = self.current_editor()
@@ -1716,14 +2400,23 @@ class TextDark(QMainWindow):
             getattr(e, method)()
 
     def change_font(self, font):
+        self._saved_font = QFont(font)
+        self.settings.setValue("editor_font", self._saved_font.toString())
         for i in range(self.tabs.count()):
-            self.tabs.widget(i).editor.setFont(font)
+            self._apply_saved_font(self.tabs.widget(i).editor)
 
     def change_font_size(self, size):
+        if self._saved_font is not None:
+            base = QFont(self._saved_font)
+        elif current_editor_style() == STYLE_NOTEBOOK:
+            base = default_notebook_font()
+        else:
+            base = default_editor_font()
+        base.setPointSize(max(6, min(48, int(size))))
+        self._saved_font = base
+        self.settings.setValue("editor_font", base.toString())
         for i in range(self.tabs.count()):
-            font = self.tabs.widget(i).editor.font()
-            font.setPointSize(size)
-            self.tabs.widget(i).editor.setFont(font)
+            self._apply_saved_font(self.tabs.widget(i).editor)
 
     def open_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Открыть файл", "", "Поддерживаемые файлы (*.txtd *.txt *.py *.js *.ts *.jsx *.tsx *.html *.htm *.css *.scss *.json *.xml *.yaml *.yml *.md *.c *.cpp *.h *.hpp *.cs *.java *.php *.sql *.sh *.bat *.ps1 *.ini *.cfg *.log *.toml);;Все файлы (*.*)")
@@ -1732,10 +2425,35 @@ class TextDark(QMainWindow):
 
     def open_file(self, path):
         p = Path(path)
+        rich_html = None
         try:
             data = p.read_bytes()
             if p.suffix.lower() == ".txtd" or data.startswith(MAGIC):
                 text = decrypt_text(data)
+                if text.startswith(RICH_DOC_PREFIX):
+                    rich_html = text[len(RICH_DOC_PREFIX):]
+                    if current_editor_style() == STYLE_PROGRAMMING:
+                        choice = msg_question(
+                            self,
+                            "Форматированный документ",
+                            "Этот файл содержит форматирование, таблицы и/или изображения.\n"
+                            "Переключить textDark в режим «Блокнот», чтобы открыть его полностью?\n\n"
+                            "Да — открыть со всем оформлением.\n"
+                            "Нет — открыть только текст.\n"
+                            "Отмена — не открывать файл.",
+                            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+                        )
+                        if choice == QMessageBox.Cancel:
+                            return
+                        if choice == QMessageBox.Yes:
+                            if not self.set_editor_style(STYLE_NOTEBOOK):
+                                return
+                            text = ""
+                        else:
+                            text = rich_html_to_plain_text(rich_html)
+                            rich_html = None
+                    else:
+                        text = ""
             else:
                 text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -1744,14 +2462,12 @@ class TextDark(QMainWindow):
         except Exception as exc:
             msg_crit(self, "Ошибка открытия", str(exc))
             return
-        tab = DocumentTab(p, text)
+        tab = DocumentTab(p, text, rich_html=rich_html)
         idx = self.tabs.addTab(tab, p.name)
         self._attach_close(idx)
         self._apply_saved_font(tab.editor)
         self.tabs.setCurrentIndex(idx)
-        tab.editor.textChanged.connect(lambda t=tab: self.update_tab_title(t))
-        tab.editor.document().modificationChanged.connect(lambda _m, t=tab: self.update_tab_title(t))
-        tab.editor.cursorPositionChanged.connect(self.update_status)
+        self._connect_tab_signals(tab)
         tab.editor.document().setModified(False)
         self.update_tab_title(tab)
         self.update_status()
@@ -1780,7 +2496,10 @@ class TextDark(QMainWindow):
     def _write_tab(self, tab, path, plain=False):
         try:
             text = tab.editor.toPlainText()
-            payload = text.encode("utf-8") if plain or path.suffix.lower() != ".txtd" else encrypt_text(text)
+            if plain or path.suffix.lower() != ".txtd":
+                payload = text.encode("utf-8")
+            else:
+                payload = encrypt_text(serialize_tab(tab))
             temp = path.with_suffix(path.suffix + ".tmp")
             temp.write_bytes(payload)
             temp.replace(path)
@@ -1789,7 +2508,10 @@ class TextDark(QMainWindow):
             tab.set_highlighter()
             self.update_tab_title(tab)
             self.update_status()
-            self.status.showMessage(f"Сохранено: {path.name}", 3500)
+            self.status.showMessage(
+                f"Сохранено: {path.name}" + (" · форматирование сохраняется только в .txtd" if tab.style == STYLE_NOTEBOOK and path.suffix.lower() != ".txtd" else ""),
+                5000
+            )
         except Exception as exc:
             msg_crit(self, "Ошибка сохранения", str(exc))
 
@@ -1834,11 +2556,18 @@ class TextDark(QMainWindow):
                 tab = self.tabs.widget(i)
                 if isinstance(tab, DocumentTab) and tab.editor.document().isModified():
                     name = f"tab_{i}.recovery"
-                    (folder / (name + ".txtd")).write_bytes(encrypt_text(tab.editor.toPlainText()))
+                    (folder / (name + ".txtd")).write_bytes(encrypt_text(serialize_tab(tab)))
         except Exception:
             pass
 
     def closeEvent(self, event):
+        if not self._really_quit and bool(self.settings.value("minimize_to_tray", False, type=bool)) and self.tray_icon is not None:
+            self.settings.setValue("window_geometry", self.saveGeometry())
+            self.hide()
+            event.ignore()
+            if self.tray_icon:
+                self.tray_icon.showMessage("textDark", "Приложение продолжает работать в системном трее.", QSystemTrayIcon.Information, 2500)
+            return
         for i in reversed(range(self.tabs.count())):
             tab = self.tabs.widget(i)
             if isinstance(tab, DocumentTab) and tab.editor.document().isModified():
@@ -1846,12 +2575,49 @@ class TextDark(QMainWindow):
                 answer = msg_question(self, "Выход", f"Сохранить изменения в «{tab.title}»?",
                                       QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
                 if answer == QMessageBox.Cancel:
-                    event.ignore(); return
+                    event.ignore()
+                    if self._really_quit:
+                        self._really_quit = False
+                        self.showNormal()
+                    return
                 if answer == QMessageBox.Save:
                     self.save()
                     if tab.editor.document().isModified():
-                        event.ignore(); return
+                        event.ignore()
+                        if self._really_quit:
+                            self._really_quit = False
+                            self.showNormal()
+                        return
+        self.settings.setValue("window_geometry", self.saveGeometry())
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
         event.accept()
+        if self._really_quit:
+            QApplication.quit()
+
+def build_intro_splash():
+    pixmap = QPixmap(460, 210)
+    pixmap.fill(QColor(BG))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QColor(BORDER))
+    painter.drawRoundedRect(1, 1, 458, 208, 18, 18)
+    logo_path = resource_path("logo.png")
+    if logo_path:
+        logo = QPixmap(str(logo_path))
+        if not logo.isNull():
+            painter.drawPixmap(34, 65, 76, 76, logo.scaled(76, 76, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    painter.setPen(QColor(TEXT))
+    font = QFont("Segoe UI", 24, QFont.Bold)
+    painter.setFont(font)
+    painter.drawText(132, 95, "textDark")
+    painter.setPen(QColor(MUTED))
+    painter.setFont(QFont("Segoe UI", 10))
+    painter.drawText(134, 124, "Подготавливаем рабочее пространство")
+    painter.setPen(QColor(ACCENT))
+    painter.drawRoundedRect(134, 151, 270, 3, 1, 1)
+    painter.end()
+    return QSplashScreen(pixmap, Qt.WindowStaysOnTopHint)
 
 def main():
     app = QApplication(sys.argv)
@@ -1859,9 +2625,33 @@ def main():
     app.setOrganizationName(APP_NAME)
     apply_theme(app)
     get_background()
+    # Небольшая подготовка до показа первого окна.
+    try:
+        decrypt_text(encrypt_text("warmup"))
+        QTextDocument().setPlainText("warmup")
+    except Exception:
+        pass
     path = sys.argv[1] if len(sys.argv) > 1 and Path(sys.argv[1]).exists() else None
-    window = TextDark(path)
-    window.show()
+    settings = QSettings("textDark", "textDark")
+    first_run = not settings.value("intro_shown", False, type=bool)
+    if first_run:
+        splash = build_intro_splash()
+        splash.show()
+        app.processEvents()
+
+        def finish_intro():
+            # Создание главного окна происходит уже под заставкой — это и есть предзагрузка.
+            window = TextDark(path)
+            app._textdark_windows = [window]
+            window.show()
+            splash.finish(window)
+            settings.setValue("intro_shown", True)
+
+        QTimer.singleShot(80, finish_intro)
+    else:
+        window = TextDark(path)
+        app._textdark_windows = [window]
+        window.show()
     sys.exit(app.exec())
 
 if __name__ == "__main__":
