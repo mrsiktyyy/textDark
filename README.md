@@ -42,7 +42,7 @@
 
 <!-- Заменить ссылку ниже на адрес репозитория проекта -->
 
-[![GitHub Releases](https://img.shields.io/badge/GitHub-Releases-181717?style=for-the-badge&logo=github)](https://github.com/USERNAME/REPOSITORY/releases)
+[![GitHub Releases](https://img.shields.io/badge/GitHub-Releases-181717?style=for-the-badge&logo=github)]([https://github.com/USERNAME/REPOSITORY/releases](https://github.com/mrsiktyyy/textDark/releases))
 
 </div>
 
