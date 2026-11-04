@@ -4,16 +4,17 @@ from datetime import datetime
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from PySide6.QtCore import Qt, QRect, QSize, QTimer, QSettings
+from PySide6.QtCore import Qt, QRect, QRectF, QPointF, QSize, QTimer, QSettings
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QPainter, QTextFormat, QSyntaxHighlighter,
+    QAction, QColor, QFont, QPainter, QPen, QPalette, QTextFormat, QSyntaxHighlighter,
     QTextCharFormat, QKeySequence, QTextCursor
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPlainTextEdit, QFileDialog,
-    QMessageBox, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStatusBar, QToolBar, QFontComboBox, QSpinBox, QSplitter, QInputDialog,
-    QFontDialog, QDialog, QDialogButtonBox, QLineEdit, QMenu, QGridLayout
+    QMessageBox, QTabWidget, QTabBar, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QStatusBar, QToolBar, QToolButton, QAbstractButton, QFontComboBox, QSpinBox,
+    QSplitter, QInputDialog, QFontDialog, QDialog, QDialogButtonBox, QLineEdit,
+    QMenu, QGridLayout
 )
 
 APP_NAME = "textDark"
@@ -35,11 +36,44 @@ TEXT_EXTENSIONS = {
     ".rs", ".go", ".rb", ".swift", ".kt", ".lua", ".r", ".m", ".properties"
 }
 
+# ───────────────────────── Дизайн-токены ─────────────────────────
+# Нейтральная графитовая палитра (как у YouTube / ChatGPT), один акцент (оранжевый, как у Nike).
+BG = "#0e0e0f"             # рамка окна, меню, строка состояния
+EDITOR_BG = "#131314"      # поверхность редактора
+SURFACE = "#1d1d20"        # кнопки, чипы вкладок, меню
+SURFACE_HOVER = "#2a2a2e"  # наведение
+BORDER = "#2a2a2d"         # тонкие границы
+TEXT = "#ececee"           # основной текст
+MUTED = "#8f8f96"          # второстепенный текст
+ACCENT = "#ff5a1f"         # акцент
+LINE_HL = "#19191b"        # подсветка текущей строки
+GUTTER_TEXT = "#5c5c63"    # номера строк
+
+
 def app_data_dir():
     base = os.getenv("APPDATA") or str(Path.home())
     path = Path(base) / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def resource_path(name):
+    """Ищет ресурс (например logo.png) и рядом с main.py, и внутри собранного EXE."""
+    bases = []
+    if hasattr(sys, "_MEIPASS"):
+        bases.append(Path(sys._MEIPASS))
+    bases.append(Path(__file__).resolve().parent)
+    for base in bases:
+        candidate = base / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+def default_editor_font():
+    font = QFont()
+    font.setFamilies(["Cascadia Code", "Cascadia Mono", "Consolas", "Courier New"])
+    font.setStyleHint(QFont.Monospace)
+    font.setPointSize(11)
+    return font
 
 def encrypt_text(text: str) -> bytes:
     nonce = secrets.token_bytes(12)
@@ -57,6 +91,88 @@ def decrypt_text(data: bytes) -> str:
         return AESGCM(APP_KEY).decrypt(nonce, payload, MAGIC).decode("utf-8")
     except Exception as exc:
         raise ValueError("Не удалось расшифровать файл: файл повреждён или создан несовместимой версией textDark.") from exc
+
+def apply_theme(app):
+    """Fusion + тёмная палитра: диалоги, списки и поля ввода автоматически становятся тёмными."""
+    app.setStyle("Fusion")
+    R = QPalette.ColorRole
+    G = QPalette.ColorGroup
+    pal = QPalette()
+    pal.setColor(R.Window, QColor(BG))
+    pal.setColor(R.WindowText, QColor(TEXT))
+    pal.setColor(R.Base, QColor(EDITOR_BG))
+    pal.setColor(R.AlternateBase, QColor(SURFACE))
+    pal.setColor(R.ToolTipBase, QColor(SURFACE_HOVER))
+    pal.setColor(R.ToolTipText, QColor(TEXT))
+    pal.setColor(R.Text, QColor(TEXT))
+    pal.setColor(R.Button, QColor(SURFACE))
+    pal.setColor(R.ButtonText, QColor(TEXT))
+    pal.setColor(R.BrightText, QColor("#ffffff"))
+    pal.setColor(R.Link, QColor(ACCENT))
+    pal.setColor(R.Highlight, QColor(ACCENT))
+    pal.setColor(R.HighlightedText, QColor("#ffffff"))
+    pal.setColor(R.PlaceholderText, QColor(MUTED))
+    for role in (R.Text, R.ButtonText, R.WindowText):
+        pal.setColor(G.Disabled, role, QColor("#5d5d63"))
+    app.setPalette(pal)
+    font = QFont()
+    font.setFamilies(["Segoe UI Variable Text", "Segoe UI", "Inter", "Helvetica Neue", "Arial"])
+    font.setPointSize(10)
+    app.setFont(font)
+
+class TabCloseButton(QAbstractButton):
+    """Круглая кнопка закрытия вкладки: рисуется вручную и всегда совпадает по цвету с вкладкой."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TabCloseButton")
+        self.setFixedSize(20, 20)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setToolTip("Закрыть вкладку")
+
+    def sizeHint(self):
+        return QSize(20, 20)
+
+    def _on_selected_tab(self):
+        bar = self.parentWidget()
+        if isinstance(bar, QTabBar):
+            index = bar.currentIndex()
+            if index >= 0:
+                return bar.tabButton(index, QTabBar.RightSide) is self
+        return False
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        selected = self._on_selected_tab()
+        hover = self.underMouse()
+        down = self.isDown()
+        if hover or down:
+            if selected:
+                bg = QColor(0, 0, 0, 70 if down else 40)
+            else:
+                bg = QColor(255, 255, 255, 56 if down else 34)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(bg)
+            painter.drawEllipse(QRectF(self.rect()).adjusted(1, 1, -1, -1))
+        if selected:
+            color = QColor(BG) if hover else QColor("#4a4a50")
+        else:
+            color = QColor("#ffffff") if hover else QColor("#9a9aa2")
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        cx, cy, d = self.width() / 2, self.height() / 2, 3.6
+        painter.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
+        painter.drawLine(QPointF(cx - d, cy + d), QPointF(cx + d, cy - d))
 
 class LineNumberArea(QWidget):
     def __init__(self, editor):
@@ -121,15 +237,33 @@ class Editor(QPlainTextEdit):
         self.blockCountChanged.connect(self.update_gutter_width)
         self.updateRequest.connect(self.update_gutter)
         self.cursorPositionChanged.connect(self.highlight_current_line)
+        self.cursorPositionChanged.connect(lambda: self.gutter.update())
         self.update_gutter_width(0)
         self.highlight_current_line()
-        self.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
-        self.setFont(QFont("Cascadia Code", 11))
+        self.setCursorWidth(2)
+        self.setFont(default_editor_font())   # setFont также пересчитывает табуляцию и ширину нумерации
         self.highlighter = None
+
+    # Qt не вызывает виртуальный setFont, поэтому пересчёт метрик делаем сами.
+    def setFont(self, font):
+        super().setFont(font)
+        self.refresh_metrics()
+
+    def refresh_metrics(self):
+        self.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
+        self.update_gutter_width(0)
+        cr = self.contentsRect()
+        self.gutter.setGeometry(QRect(cr.left(), cr.top(), self.line_number_width(), cr.height()))
+        self.gutter.update()
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        if event.modifiers() & Qt.ControlModifier:
+            self.refresh_metrics()
 
     def line_number_width(self):
         digits = len(str(max(1, self.blockCount())))
-        return 16 + self.fontMetrics().horizontalAdvance("9") * digits
+        return 30 + self.fontMetrics().horizontalAdvance("9") * digits
 
     def update_gutter_width(self, _):
         self.setViewportMargins(self.line_number_width(), 0, 0, 0)
@@ -149,15 +283,17 @@ class Editor(QPlainTextEdit):
 
     def paint_line_numbers(self, event):
         painter = QPainter(self.gutter)
-        painter.fillRect(event.rect(), QColor("#101114"))
+        painter.fillRect(event.rect(), QColor(EDITOR_BG))
+        painter.setFont(self.font())
+        current = self.textCursor().blockNumber()
         block = self.firstVisibleBlock()
         number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         bottom = top + int(self.blockBoundingRect(block).height())
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                painter.setPen(QColor("#687080"))
-                painter.drawText(0, top, self.gutter.width()-8, self.fontMetrics().height(),
+                painter.setPen(QColor(ACCENT) if number == current else QColor(GUTTER_TEXT))
+                painter.drawText(0, top, self.gutter.width()-14, self.fontMetrics().height(),
                                  Qt.AlignRight, str(number + 1))
             block = block.next()
             top = bottom
@@ -168,7 +304,7 @@ class Editor(QPlainTextEdit):
         selections = []
         if not self.isReadOnly():
             sel = QTextEditExtraSelection()
-            sel.format.setBackground(QColor("#1a1d24"))
+            sel.format.setBackground(QColor(LINE_HL))
             sel.format.setProperty(QTextFormat.FullWidthSelection, True)
             sel.cursor = self.textCursor()
             sel.cursor.clearSelection()
@@ -180,14 +316,18 @@ class Editor(QPlainTextEdit):
         closing = set(pairs.values())
         cursor = self.textCursor()
         key = event.text()
-        if key in pairs and not cursor.hasSelection():
-            cursor.insertText(key + pairs[key])
-            cursor.movePosition(QTextCursor.Left)
-            self.setTextCursor(cursor)
-            return
-        if key in closing and not cursor.hasSelection() and self.textCursor().charFormat():
-            if self.textCursor().document().characterAt(cursor.position()) == key:
+        # Если следующий символ уже совпадает с вводимой закрывающей скобкой/кавычкой — просто перешагиваем её.
+        if key and key in closing and not cursor.hasSelection():
+            if self.document().characterAt(cursor.position()) == key:
                 cursor.movePosition(QTextCursor.Right)
+                self.setTextCursor(cursor)
+                return
+        if key and key in pairs and not cursor.hasSelection():
+            # В середине слова (don't, it's) кавычки не дублируем.
+            prev = self.document().characterAt(cursor.position() - 1) if cursor.position() > 0 else ""
+            if not (key in ('"', "'") and prev.isalnum()):
+                cursor.insertText(key + pairs[key])
+                cursor.movePosition(QTextCursor.Left)
                 self.setTextCursor(cursor)
                 return
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -247,15 +387,19 @@ class TextDark(QMainWindow):
     def __init__(self, initial_file=None):
         super().__init__()
         self.settings = QSettings("textDark", "textDark")
+        self._saved_font = self._load_saved_font()
+        self._titlebar_done = False
         self.setWindowTitle("textDark - Текстовый редактор")
         self._set_app_icon()
         self.resize(1180, 780)
         self.setMinimumSize(760, 520)
         self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
+        self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
+        self.tabs.setElideMode(Qt.ElideRight)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.update_status)
+        self.tabs.currentChanged.connect(self._refresh_close_buttons)
         self.setCentralWidget(self.tabs)
         self._build_ui()
         self._apply_style()
@@ -276,13 +420,47 @@ class TextDark(QMainWindow):
         return tab.editor if tab else None
 
     def _set_app_icon(self):
-        candidates = [Path(__file__).with_name("logo.png"), Path(getattr(sys, "_MEIPASS", "")) / "logo.png"]
-        for candidate in candidates:
-            if candidate.is_file():
-                from PySide6.QtGui import QIcon
-                self.setWindowIcon(QIcon(str(candidate)))
-                QApplication.setWindowIcon(QIcon(str(candidate)))
-                break
+        logo = resource_path("logo.png")
+        if logo:
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(str(logo)))
+            QApplication.setWindowIcon(QIcon(str(logo)))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._titlebar_done:
+            self._titlebar_done = True
+            self._apply_dark_titlebar()
+
+    def _apply_dark_titlebar(self):
+        """Тёмный заголовок окна в Windows 10/11 (на других системах ничего не делает)."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            dwm = ctypes.windll.dwmapi
+            def set_attr(attr, value):
+                v = ctypes.c_int(value)
+                dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+            set_attr(20, 1)           # DWMWA_USE_IMMERSIVE_DARK_MODE
+            set_attr(19, 1)           # то же для ранних сборок Windows 10
+            set_attr(35, 0x000F0E0E)  # цвет заголовка (Windows 11), формат 0x00BBGGRR = #0e0e0f
+            set_attr(36, 0x00EEECEC)  # цвет текста заголовка (Windows 11)
+        except Exception:
+            pass
+
+    def _load_saved_font(self):
+        value = self.settings.value("editor_font", "")
+        if value:
+            font = QFont()
+            if font.fromString(str(value)):
+                return font
+        return None
+
+    def _apply_saved_font(self, editor):
+        if self._saved_font is not None:
+            editor.setFont(self._saved_font)
 
     def _build_ui(self):
         bar = self.menuBar()
@@ -320,12 +498,37 @@ class TextDark(QMainWindow):
             ("Удалить дубли строк", self.remove_duplicate_lines, None), ("Перевернуть строки", self.reverse_lines, None),
             ("Открыть папку резервных копий", self.open_backup_folder, None)])
         self._make_menu(bar, "Справка", [("Сочетания клавиш", self.show_shortcuts, None), ("О программе textDark", self.about, None)])
+
+        # Кнопка «+» справа от вкладок (как в браузере).
+        corner = QWidget()
+        corner_layout = QHBoxLayout(corner)
+        corner_layout.setContentsMargins(6, 0, 12, 0)
+        add_btn = QToolButton()
+        add_btn.setObjectName("NewTabButton")
+        add_btn.setText("+")
+        add_btn.setFixedSize(30, 30)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setToolTip("Новая вкладка (Ctrl+N)")
+        add_btn.clicked.connect(self.new_tab)
+        corner_layout.addWidget(add_btn)
+        self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
+
+        # Строка состояния: сообщения слева, сведения о документе справа.
         self.status = QStatusBar()
+        self.status.setSizeGripEnabled(False)
         self.setStatusBar(self.status)
+        self.lbl_pos = QLabel("")
+        self.lbl_kind = QLabel("")
+        self.lbl_enc = QLabel("UTF-8")
+        for label in (self.lbl_pos, self.lbl_kind, self.lbl_enc):
+            self.status.addPermanentWidget(label)
         self.status.showMessage("Готово · TXT / CODE / TXTD")
 
     def _make_menu(self, bar, title, items):
         menu = bar.addMenu(title)
+        # Прозрачный фон без системной тени, чтобы работали скруглённые углы меню.
+        menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WA_TranslucentBackground)
         for item in items:
             if item is None:
                 menu.addSeparator(); continue
@@ -337,6 +540,26 @@ class TextDark(QMainWindow):
                 action.setShortcutContext(Qt.WindowShortcut)
             menu.addAction(action)
         return menu
+
+    # ── кнопки закрытия вкладок ──
+    def _attach_close(self, index):
+        button = TabCloseButton()
+        button.clicked.connect(lambda _checked=False, b=button: self._close_by_button(b))
+        self.tabs.tabBar().setTabButton(index, QTabBar.RightSide, button)
+
+    def _close_by_button(self, button):
+        bar = self.tabs.tabBar()
+        for i in range(self.tabs.count()):
+            if bar.tabButton(i, QTabBar.RightSide) is button:
+                self.close_tab(i)
+                return
+
+    def _refresh_close_buttons(self, *_):
+        bar = self.tabs.tabBar()
+        for i in range(self.tabs.count()):
+            button = bar.tabButton(i, QTabBar.RightSide)
+            if button:
+                button.update()
 
     def _editor_text(self):
         e = self.current_editor()
@@ -465,11 +688,21 @@ class TextDark(QMainWindow):
     def repeat_last_action(self): self.status.showMessage("Нет действия для повтора", 2500)
 
     def choose_font(self):
+        """Исправлено: в PySide6 QFontDialog.getFont возвращает (ok, font), а не (font, ok)."""
         e=self.current_editor()
-        if e:
-            font,ok=QFontDialog.getFont(e.font(),self,"Выбор шрифта")
-            if ok:
-                for i in range(self.tabs.count()): self.tabs.widget(i).editor.setFont(font)
+        if not e: return
+        result = QFontDialog.getFont(e.font(), self, "Выбор шрифта",
+                                     QFontDialog.FontDialogOption.DontUseNativeDialog)
+        if isinstance(result[0], bool):
+            ok, font = result
+        else:
+            font, ok = result
+        if ok:
+            self._saved_font = font
+            self.settings.setValue("editor_font", font.toString())
+            for i in range(self.tabs.count()):
+                self.tabs.widget(i).editor.setFont(font)
+            self.status.showMessage(f"Шрифт: {font.family()}, {font.pointSize()} pt", 3500)
 
     def toggle_format(self, kind):
         from PySide6.QtGui import QTextCharFormat
@@ -483,10 +716,17 @@ class TextDark(QMainWindow):
         c.mergeCharFormat(fmt); e.mergeCurrentCharFormat(fmt)
 
     def zoom(self, amount):
-        for i in range(self.tabs.count()): self.tabs.widget(i).editor.zoomIn(amount) if amount>0 else self.tabs.widget(i).editor.zoomOut(-amount)
+        for i in range(self.tabs.count()):
+            ed = self.tabs.widget(i).editor
+            if amount > 0:
+                ed.zoomIn(amount)
+            else:
+                ed.zoomOut(-amount)
+            ed.refresh_metrics()
     def reset_zoom(self):
         for i in range(self.tabs.count()):
-            font=self.tabs.widget(i).editor.font(); font.setPointSize(11); self.tabs.widget(i).editor.setFont(font)
+            ed = self.tabs.widget(i).editor
+            font = ed.font(); font.setPointSize(11); ed.setFont(font)
     def toggle_fullscreen(self): self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
     def insert_symbol(self):
@@ -528,34 +768,129 @@ class TextDark(QMainWindow):
         QMessageBox.information(self,"Сочетания клавиш","Ctrl+N — создать\nCtrl+O — открыть\nCtrl+S — сохранить\nCtrl+Shift+S — сохранить как\nCtrl+Z / Ctrl+Y — отменить / повторить\nCtrl+X / C / V — вырезать / копировать / вставить\nCtrl+F — найти\nCtrl+H — заменить\nCtrl+G — перейти к строке\nCtrl+A — выделить всё\nCtrl+B / I / U — жирный / курсив / подчёркнутый\nF11 — полный экран\nCtrl+0 — сброс масштаба")
     def about(self):
         from PySide6.QtGui import QPixmap
-        from PySide6.QtWidgets import QVBoxLayout, QLabel
-        dialog=QDialog(self); dialog.setWindowTitle("О программе textDark"); dialog.setMinimumWidth(380)
-        layout=QVBoxLayout(dialog); logo=QLabel(); pix=QPixmap(str(Path(__file__).with_name("logo.png")))
-        if not pix.isNull(): logo.setPixmap(pix.scaled(96,96,Qt.KeepAspectRatio,Qt.SmoothTransformation)); logo.setAlignment(Qt.AlignCenter); layout.addWidget(logo)
-        title=QLabel("textDark 2.0.3"); title.setAlignment(Qt.AlignCenter); title.setStyleSheet("font-size:20px;font-weight:700;"); layout.addWidget(title)
-        desc=QLabel("Это легкий текстовый редактор, поддерживающий многие текстовые файлы и имеет свой собственный формат .txtd\n\nЕго создатель - mrsiktyyy, chatGPT free, Geminii AI")
-        desc.setWordWrap(True); desc.setAlignment(Qt.AlignCenter); layout.addWidget(desc)
-        buttons=QDialogButtonBox(QDialogButtonBox.Ok); buttons.accepted.connect(dialog.accept); layout.addWidget(buttons); dialog.exec()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("О программе textDark")
+        dialog.setMinimumWidth(420)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(32, 30, 32, 26)
+        layout.setSpacing(12)
+
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo_file = resource_path("logo.png")
+        pix = QPixmap(str(logo_file)) if logo_file else QPixmap()
+        if not pix.isNull():
+            logo.setPixmap(pix.scaled(88, 88, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            logo.setObjectName("AboutBadge")
+            logo.setText("t")
+            logo.setFixedSize(72, 72)
+        layout.addWidget(logo, 0, Qt.AlignHCenter)
+
+        title = QLabel("textDark")
+        title.setObjectName("AboutTitle")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        chip = QLabel(f"Версия {APP_VERSION}")
+        chip.setObjectName("Chip")
+        chip.setAlignment(Qt.AlignCenter)
+        layout.addWidget(chip, 0, Qt.AlignHCenter)
+
+        desc = QLabel("Это легкий текстовый редактор, поддерживающий многие текстовые файлы и имеет свой собственный формат .txtd\n\nЕго создатель - mrsiktyyy, chatGPT free, Geminii AI")
+        desc.setWordWrap(True)
+        desc.setAlignment(Qt.AlignCenter)
+        desc.setObjectName("AboutText")
+        layout.addWidget(desc)
+        layout.addSpacing(6)
+
+        close_btn = QPushButton("Закрыть")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignHCenter)
+        dialog.exec()
 
     def _apply_style(self):
-        self.setStyleSheet("""
-        QMainWindow,QWidget { background:#111216; color:#e8eaf0; }
-        QMenuBar,QMenu,QToolBar,QStatusBar { background:#15171d; color:#e8eaf0; border:0; }
-        QMenuBar::item { padding:7px 12px; }
-        QMenuBar::item:selected,QMenu::item:selected { background:#292d38; border-radius:6px; }
-        QToolBar { spacing:7px; padding:9px; border-bottom:1px solid #292c35; }
-        QToolButton,QPushButton { background:#20232b; border:1px solid #303541; border-radius:9px; padding:7px 12px; color:#f0f1f5; }
-        QToolButton:hover,QPushButton:hover { background:#2b303b; border-color:#69758b; }
-        QTabWidget::pane { border:1px solid #292c35; border-radius:8px; top:-1px; }
-        QTabBar::tab { background:#191b21; color:#9ba2b0; padding:10px 16px; border:1px solid #292c35; border-bottom:0; margin-right:3px; border-top-left-radius:8px; border-top-right-radius:8px; }
-        QTabBar::tab:selected { background:#242832; color:#fff; }
-        QPlainTextEdit { background:#111216; color:#e7e9ef; border:0; selection-background-color:#3b465a; padding:10px; }
-        QComboBox,QSpinBox { background:#20232b; border:1px solid #303541; border-radius:8px; padding:5px; }
-        """)
+        tokens = {
+            "@surfaceHover": SURFACE_HOVER, "@surface": SURFACE, "@editor": EDITOR_BG,
+            "@border": BORDER, "@muted": MUTED, "@accent": ACCENT, "@text": TEXT, "@bg": BG,
+        }
+        qss = """
+        QMainWindow, QDialog { background:@bg; }
+        QToolTip { background:@surfaceHover; color:@text; border:1px solid @border; border-radius:6px; padding:5px 9px; }
+
+        /* Меню */
+        QMenuBar { background:@bg; border:0; padding:6px 10px 4px 10px; }
+        QMenuBar::item { background:transparent; color:@muted; padding:6px 13px; margin:0 1px; border-radius:9px; }
+        QMenuBar::item:selected, QMenuBar::item:pressed { background:@surfaceHover; color:@text; }
+        QMenu { background:@surface; border:1px solid @border; border-radius:12px; padding:6px; color:@text; }
+        QMenu::item { background:transparent; padding:8px 32px 8px 14px; margin:1px 0; border-radius:8px; }
+        QMenu::item:selected { background:@surfaceHover; color:#ffffff; }
+        QMenu::item:disabled { color:#5d5d63; }
+        QMenu::separator { height:1px; background:@border; margin:6px 10px; }
+
+        /* Вкладки-«чипы» */
+        QTabWidget::pane { border:0; border-top:1px solid @border; background:@editor; top:0px; }
+        QTabBar { background:transparent; qproperty-drawBase:0; }
+        QTabBar::tab { background:@surface; color:#c9c9ce; border:1px solid @border; border-radius:15px;
+                       height:28px; min-width:84px; max-width:230px; padding:0 8px 0 14px; margin:7px 3px 8px 0; }
+        QTabBar::tab:first { margin-left:12px; }
+        QTabBar::tab:hover:!selected { background:@surfaceHover; color:@text; }
+        QTabBar::tab:selected { background:@text; color:@bg; border:1px solid @text; }
+
+        /* Кнопка «+» */
+        QToolButton#NewTabButton { background:@surface; color:@text; border:1px solid @border; border-radius:15px; font-size:18px; padding:0 0 2px 0; }
+        QToolButton#NewTabButton:hover { background:@surfaceHover; color:@accent; border-color:@accent; }
+        QToolButton#NewTabButton:pressed { background:@border; }
+
+        /* Редактор: шрифт НЕ задаём здесь, иначе QSS перекроет выбор шрифта. */
+        QPlainTextEdit { background:@editor; color:@text; border:0; padding:8px 0 0 0;
+                         selection-background-color:rgba(255, 90, 31, 95); selection-color:#ffffff; }
+
+        /* Строка состояния */
+        QStatusBar { background:@bg; color:@muted; border-top:1px solid @border; padding:2px 8px; }
+        QStatusBar::item { border:0; }
+        QStatusBar QLabel { background:transparent; color:@muted; padding:0 10px; font-size:12px; }
+
+        /* Кнопки */
+        QPushButton { background:@surface; color:@text; border:1px solid @border; border-radius:16px; padding:7px 20px; min-width:72px; min-height:18px; }
+        QPushButton:hover { background:@surfaceHover; border-color:#3a3a40; }
+        QPushButton:pressed { background:@border; }
+        QPushButton:default { background:@text; color:@bg; border:1px solid @text; font-weight:600; }
+        QPushButton:default:hover { background:#ffffff; border-color:#ffffff; }
+
+        /* Поля ввода и списки (диалоги ввода, выбор шрифта) */
+        QLineEdit { background:@editor; color:@text; border:1px solid @border; border-radius:10px; padding:7px 12px;
+                    selection-background-color:@accent; selection-color:#ffffff; }
+        QLineEdit:focus { border:1px solid @accent; }
+        QAbstractItemView { background:@editor; color:@text; border:1px solid @border; border-radius:10px; outline:0;
+                            selection-background-color:@surfaceHover; selection-color:#ffffff; }
+
+        /* Полосы прокрутки */
+        QScrollBar:vertical { background:transparent; width:14px; margin:0; }
+        QScrollBar::handle:vertical { background:#3a3a3f; border-radius:5px; min-height:40px; margin:2px 3px; }
+        QScrollBar::handle:vertical:hover { background:#5a5a61; }
+        QScrollBar:horizontal { background:transparent; height:14px; margin:0; }
+        QScrollBar::handle:horizontal { background:#3a3a3f; border-radius:5px; min-width:40px; margin:3px 2px; }
+        QScrollBar::handle:horizontal:hover { background:#5a5a61; }
+        QScrollBar::add-line, QScrollBar::sub-line { width:0; height:0; }
+        QScrollBar::add-page, QScrollBar::sub-page { background:transparent; }
+
+        /* Окно «О программе» */
+        QLabel#AboutTitle { font-size:26px; font-weight:700; color:@text; }
+        QLabel#AboutText { color:#b4b4ba; font-size:13px; }
+        QLabel#Chip { background:@surface; color:@muted; border:1px solid @border; border-radius:11px; padding:3px 12px; font-size:12px; }
+        QLabel#AboutBadge { background:@accent; color:@bg; border-radius:20px; font-size:38px; font-weight:800; }
+        """
+        for key in sorted(tokens, key=len, reverse=True):
+            qss = qss.replace(key, tokens[key])
+        self.setStyleSheet(qss)
 
     def new_tab(self):
         tab = DocumentTab()
         idx = self.tabs.addTab(tab, "Безымянный")
+        self._attach_close(idx)
+        self._apply_saved_font(tab.editor)
         self.tabs.setCurrentIndex(idx)
         tab.editor.textChanged.connect(lambda t=tab: self.update_tab_title(t))
         tab.editor.cursorPositionChanged.connect(self.update_status)
@@ -565,13 +900,22 @@ class TextDark(QMainWindow):
         i = self.tabs.indexOf(tab)
         if i >= 0:
             self.tabs.setTabText(i, ("● " if tab.editor.document().isModified() else "") + tab.title)
+            self.tabs.setTabToolTip(i, str(tab.path) if tab.path else tab.title)
 
     def update_status(self, *_):
         tab = self.current_tab()
         if not tab:
             return
         cursor = tab.editor.textCursor()
-        self.status.showMessage(f"Строка {cursor.blockNumber()+1} · Столбец {cursor.positionInBlock()+1} · {tab.editor.blockCount()} строк")
+        self.lbl_pos.setText(f"Строка {cursor.blockNumber()+1}, столбец {cursor.positionInBlock()+1}")
+        ext = tab.path.suffix.lower() if tab.path else ""
+        if ext == ".txtd":
+            kind = "TXTD · зашифровано"
+        elif ext:
+            kind = ext[1:].upper()
+        else:
+            kind = "Обычный текст"
+        self.lbl_kind.setText(f"{kind} · {tab.editor.blockCount()} строк")
 
     def run_editor(self, method):
         e = self.current_editor()
@@ -609,6 +953,8 @@ class TextDark(QMainWindow):
             return
         tab = DocumentTab(p, text)
         idx = self.tabs.addTab(tab, p.name)
+        self._attach_close(idx)
+        self._apply_saved_font(tab.editor)
         self.tabs.setCurrentIndex(idx)
         tab.editor.textChanged.connect(lambda t=tab: self.update_tab_title(t))
         tab.editor.cursorPositionChanged.connect(self.update_status)
@@ -648,6 +994,7 @@ class TextDark(QMainWindow):
             tab.editor.document().setModified(False)
             tab.set_highlighter()
             self.update_tab_title(tab)
+            self.update_status()
             self.status.showMessage(f"Сохранено: {path.name}", 3500)
         except Exception as exc:
             QMessageBox.critical(self, "Ошибка сохранения", str(exc))
@@ -717,6 +1064,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    apply_theme(app)
     path = sys.argv[1] if len(sys.argv) > 1 and Path(sys.argv[1]).exists() else None
     window = TextDark(path)
     window.show()
