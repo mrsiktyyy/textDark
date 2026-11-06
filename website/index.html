@@ -1,160 +1,380 @@
+
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0c0d10" />
-  <meta name="description" content="textDark — лёгкий тёмный редактор текста и кода для Windows. Вкладки, подсветка синтаксиса и собственный формат .txtd." />
-  <title>textDark — Текстовый редактор</title>
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css" />
-</head>
-<body>
-  <div class="ambient ambient-one" aria-hidden="true"></div>
-  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080808">
+  <meta name="description" content="textDark 3.2 — минималистичный тёмный редактор текста и кода для Windows.">
+  <title>textDark — меньше шума, больше дела</title>
 
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=4">
+</head>
+
+<body>
+
+  <!-- Декоративные фигуры -->
+  <div class="background-art" aria-hidden="true">
+    <span class="shape shape-ring"></span>
+    <span class="shape shape-cube"></span>
+    <span class="shape shape-orbit"></span>
+    <span class="shape shape-cross">＋</span>
+    <span class="shape shape-diamond"></span>
+    <span class="shape shape-line"></span>
+    <span class="shape shape-dot"></span>
+  </div>
+
+  <!-- Навигация -->
   <header class="site-header">
-    <nav class="nav-shell" aria-label="Главная навигация">
-      <a class="brand" href="#home" aria-label="textDark — главная">
-        <span class="brand-mark"><img src="./assets/logo.svg" alt="" width="28" height="28" /></span>
+    <nav class="nav-shell">
+
+      <a class="brand" href="#home">
+        <span class="brand-mark">
+          <img src="./assets/logo.svg" alt="" width="27" height="27">
+        </span>
         <span>text<span class="brand-light">Dark</span></span>
       </a>
-      <span class="nav-divider"></span>
+
       <div class="nav-links" id="navLinks">
         <a class="nav-link active" href="#home">Главная</a>
         <a class="nav-link" href="#features">Возможности</a>
-        <a class="nav-link" href="#about">О формате</a>
-        <a class="nav-link" href="https://github.com/mrsiktyyy/textDark" target="_blank" rel="noreferrer">GitHub <span class="external">↗</span></a>
+        <a class="nav-link" href="#interface">Интерфейс</a>
+        <a class="nav-link" href="#modes">Режимы</a>
+        <a class="nav-link" href="#format">Формат .txtd</a>
+        <a class="nav-link" href="#faq">FAQ</a>
       </div>
-      <a class="nav-download" href="https://github.com/mrsiktyyy/textDark/releases/download/3.2/textDark.exe" download>
-        <span class="download-icon">↓</span><span>Скачать</span>
-      </a>
-      <button class="mobile-menu" id="mobileMenu" aria-label="Открыть меню" aria-expanded="false"><span></span><span></span></button>
+
+      <div class="nav-actions">
+        <a class="nav-github"
+           href="https://github.com/mrsiktyyy/textDark"
+           target="_blank" rel="noreferrer">
+          GitHub <span>↗</span>
+        </a>
+
+        <a class="nav-download"
+           href="https://github.com/mrsiktyyy/textDark/releases/download/3.2/textDark.exe">
+          Скачать 3.2 <span>↓</span>
+        </a>
+      </div>
+
+      <button class="mobile-menu" id="mobileMenu"
+              aria-label="Открыть меню" aria-expanded="false">
+        <span></span><span></span>
+      </button>
+
     </nav>
   </header>
 
   <main>
+
+    <!-- Главная -->
     <section class="hero" id="home">
+
+      <div class="hero-glow"></div>
+
       <div class="hero-content reveal">
-        <div class="eyebrow"><span class="eyebrow-dot"></span> Версия 3.1 <span class="eyebrow-separator">/</span> Windows x64</div>
-        <h1>Текст. Код.<br /><span>Ничего лишнего.</span></h1>
-        <p class="hero-copy">Простой тёмный редактор для заметок, документов и исходного кода. Открыл — и сразу можно работать.</p>
+        <div class="eyebrow">
+          <i></i>
+          TEXT EDITOR <span>—</span> WINDOWS x64 <span>—</span> v3.2
+        </div>
+
+        <h1>
+          Меньше шума.<br>
+          <span>Больше дела.</span>
+        </h1>
+
+        <p class="hero-copy">
+          Тёмный редактор для текста, заметок и кода.
+          Всё нужное — в одном аккуратном окне.
+        </p>
+
         <div class="hero-actions">
-          <a class="button button-primary" href="https://github.com/mrsiktyyy/textDark/releases/download/3.1/textDark_v3.1.exe" download>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14" /></svg>
-            Скачать textDark 3.1
+          <a class="button button-primary"
+             href="https://github.com/mrsiktyyy/textDark/releases/download/3.2/textDark.exe">
+            <span class="button-icon">↓</span>
+            Скачать textDark 3.2
           </a>
-          <a class="button button-secondary" href="https://github.com/mrsiktyyy/textDark" target="_blank" rel="noreferrer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-.9-2.7c3-.3 6.1-1.5 6.1-6.7a5.2 5.2 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6S17.6 1.2 15 3a13.3 13.3 0 0 0-7 0C5.4 1.2 3.3 1.5 3.3 1.5a4.8 4.8 0 0 0-.1 3.6A5.2 5.2 0 0 0 1.8 8.7c0 5.2 3.1 6.4 6.1 6.7a3.4 3.4 0 0 0-.9 2.7V22" /></svg>
-            Исходный код
+
+          <a class="button button-secondary"
+             href="https://github.com/mrsiktyyy/textDark"
+             target="_blank" rel="noreferrer">
+            GitHub <span class="arrow">↗</span>
           </a>
         </div>
-        <div class="hero-meta"><span><i class="meta-check">✓</i> Безопасно</span><span><i class="meta-check">✓</i> Один EXE-файл</span><span><i class="meta-check">✓</i> Просто и удобно</span></div>
+
+        <div class="hero-meta">
+          <span>Windows 10 / 11</span>
+          <b></b>
+          <span>Один EXE-файл</span>
+          <b></b>
+          <span>Бесплатно</span>
+        </div>
       </div>
 
-      <div class="product-shot-stage reveal" aria-label="Скриншот интерфейса textDark 3.1">
+      <!-- Превью приложения -->
+      <div class="product-shot-stage reveal" id="interface">
         <div class="shot-frame">
-          <div class="shot-frame-top">
-            <span class="shot-frame-label"><span class="shot-live-dot"></span> textDark 3.1 / Интерфейс</span>
-            <span class="shot-frame-type">ПРЕДПРОСМОТР</span>
+
+          <div class="shot-top">
+            <span><i></i> textDark <em>/</em> editor</span>
+            <span class="shot-version">3.2 · PREVIEW</span>
           </div>
+
           <div class="shot-image">
-            <img src="./p1.png" alt="Скриншот текстового редактора textDark 3.1" onerror="this.style.display='none'; this.parentElement.classList.add('image-missing');" />
-            <div class="shot-placeholder" aria-hidden="true">
-              <div class="shot-placeholder-icon">
-                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-              </div>
-              <strong>Место для скриншота textDark</strong>
-              <span>Добавь файл <code>p1.png</code> рядом с index.html</span>
+            <img src="./p1.png"
+                 alt="Интерфейс редактора textDark"
+                 onerror="this.style.display='none'; this.parentElement.classList.add('image-missing');">
+
+            <div class="shot-placeholder">
+              <span class="placeholder-symbol">tD</span>
+              <strong>Твой рабочий стол без лишнего</strong>
+              <small>Скриншот интерфейса textDark</small>
             </div>
           </div>
-          <div class="shot-frame-bottom"><span>textDark — Текстовый редактор</span><span>Windows x64 <b>·</b> 3.1</span></div>
+
+          <div class="shot-bottom">
+            <span><i></i> Ready to write</span>
+            <span>UTF-8 · Windows</span>
+          </div>
+
         </div>
-        <div class="shot-shadow" aria-hidden="true"></div>
+        <div class="shot-backlight"></div>
       </div>
-      <a class="scroll-cue href="#features"><span></span> Листай ниже</a>
+
+      <a class="scroll-cue" href="#features">
+        <span></span> Прокрутить
+      </a>
+
     </section>
 
-    <section class="features section" id="features">
-      <div class="features-intro reveal">
-        <div class="features-intro-copy">
-          <span class="section-tag">Возможности редактора</span>
-          <h2>Всё для работы.<br /><span>Ничего лишнего.</span></h2>
+    <!-- Возможности -->
+    <section class="section features" id="features">
+
+      <div class="section-heading reveal">
+        <div>
+          <span class="section-kicker">01 / ВОЗМОЖНОСТИ</span>
+          <h2>Только то,<br><span>что нужно.</span></h2>
         </div>
-        <p>textDark не отвлекает от главного. Открывай файлы, редактируй текст и код, настраивай внешний вид — всё в одном месте.</p>
+        <p>Продуманные инструменты без перегруженного интерфейса.</p>
       </div>
 
       <div class="feature-grid">
-        <article class="feature-card feature-large reveal">
-          <div class="feature-card-top"><span class="feature-index">01 / ДОКУМЕНТЫ</span><span class="feature-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 4v5"/></svg></span></div>
-          <div><h3>Несколько документов</h3><p>Открывай текстовые файлы и код в отдельных вкладках. Переключайся между ними, не теряя рабочий контекст.</p></div>
-          <div class="mini-tabs"><span class="mini-tab selected">notes.txt</span><span class="mini-tab">main.py</span><span class="mini-tab">draft.md</span><span class="mini-plus">+</span></div>
+
+        <article class="feature-card feature-main reveal">
+          <span class="card-number">01</span>
+          <div class="card-icon">▤</div>
+          <h3>Вкладки</h3>
+          <p>Несколько документов в одном окне.</p>
+
+          <div class="tab-preview">
+            <span class="tab-active">notes.txt <i></i></span>
+            <span>main.py</span>
+            <span>draft.md</span>
+            <b>＋</b>
+          </div>
         </article>
 
         <article class="feature-card reveal">
-          <div class="feature-card-top"><span class="feature-index">02 / РЕДАКТИРОВАНИЕ</span><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-10-2 12"/></svg></span></div>
-          <h3>Текст и код</h3><p>UTF-8, нумерация строк, подсветка синтаксиса и текущей строки.</p>
+          <span class="card-number">02</span>
+          <div class="card-icon">&lt;/&gt;</div>
+          <h3>Подсветка кода</h3>
+          <p>Строки, отступы и подсветка синтаксиса.</p>
         </article>
 
         <article class="feature-card reveal">
-          <div class="feature-card-top"><span class="feature-index">03 / ФОРМАТ</span><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.8 2.9 8.2 7 10 4.1-1.8 7-5.2 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span></div>
-          <h3>Формат .txtd</h3><p>Собственный формат с автоматическим AES-256-GCM шифрованием и расшифровкой.</p>
+          <span class="card-number">03</span>
+          <div class="card-icon">▧</div>
+          <h3>Оформление</h3>
+          <p>Изображения, таблицы и форматирование текста.</p>
         </article>
 
         <article class="feature-card reveal">
-          <div class="feature-card-top"><span class="feature-index">04 / ВНЕШНИЙ ВИД</span><span class="feature-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></span></div>
-          <h3>Настраиваемый фон</h3><p>Выбери изображение и настрой его прозрачность, затемнение и размытие.</p>
+          <span class="card-number">04</span>
+          <div class="card-icon">◈</div>
+          <h3>Свои настройки</h3>
+          <p>Шрифт, масштаб и фон под себя.</p>
         </article>
 
-        <article class="feature-card feature-wide reveal">
-          <div class="feature-wide-copy"><div class="feature-card-top"><span class="feature-index">05 / МЕЛОЧИ, КОТОРЫЕ ПОМОГАЮТ</span><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg></span></div><h3>Работай в своём ритме</h3><p>Автозакрытие скобок и кавычек, базовые автоотступы, плавные анимации и восстановление несохранённого текста.</p></div>
-          <div class="feature-pills"><span>Автоотступы</span><span>Автовосстановление</span><span>Плавные анимации</span></div>
+        <article class="feature-card reveal">
+          <span class="card-number">05</span>
+          <div class="card-icon">⌁</div>
+          <h3>Автовосстановление</h3>
+          <p>Возврат к несохранённой работе.</p>
         </article>
+
+        <article class="feature-card reveal">
+          <span class="card-number">06</span>
+          <div class="card-icon">◉</div>
+          <h3>Быстрый запуск</h3>
+          <p>Портативный EXE без сложной установки.</p>
+        </article>
+
       </div>
     </section>
 
-    <section class="format-section section" id="about">
+    <!-- Режимы -->
+    <section class="section modes" id="modes">
+
+      <div class="section-heading reveal">
+        <div>
+          <span class="section-kicker">02 / ДВА РЕЖИМА</span>
+          <h2>Под любую<br><span>задачу.</span></h2>
+        </div>
+        <p>Переключай стиль редактора в настройках.</p>
+      </div>
+
+      <div class="mode-grid">
+
+        <article class="mode-card mode-code reveal">
+          <div class="mode-top">
+            <span>MODE_01</span>
+            <span class="mode-status">01</span>
+          </div>
+
+          <div class="mode-glyph">&lt;/&gt;</div>
+          <h3>Программирование</h3>
+          <p>Нумерация строк, подсветка синтаксиса и инструменты для работы с кодом.</p>
+
+          <div class="mode-tags">
+            <span>Code</span>
+            <span>Line numbers</span>
+            <span>Auto-indent</span>
+          </div>
+        </article>
+
+        <article class="mode-card mode-notes reveal">
+          <div class="mode-top">
+            <span>MODE_02</span>
+            <span class="mode-status">02</span>
+          </div>
+
+          <div class="mode-glyph">T<span>✳</span></div>
+          <h3>Блокнот</h3>
+          <p>Форматирование, изображения и таблицы для обычных документов.</p>
+
+          <div class="mode-tags">
+            <span>Rich text</span>
+            <span>Images</span>
+            <span>Tables</span>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Формат -->
+    <section class="section format-section" id="format">
+
       <div class="format-card reveal">
+
         <div class="format-copy">
-          <span class="section-tag">Свой формат документов</span>
-          <h2>Знакомься,<br /><span>.txtd</span></h2>
-          <p>Сохраняй документ в собственном формате textDark. Содержимое шифруется при сохранении и автоматически открывается внутри редактора.</p>
-          <a class="text-link" href="https://github.com/mrsiktyyy/textDark#-формат-txtd--что-это" target="_blank" rel="noreferrer">Подробнее о формате <span>↗</span></a>
+          <span class="section-kicker">03 / ФОРМАТ ФАЙЛОВ</span>
+          <h2>Свои документы.<br><span>Свой формат.</span></h2>
+          <p>
+            <strong>.txtd</strong> — формат textDark с автоматическим
+            шифрованием и открытием файлов.
+          </p>
         </div>
+
         <div class="format-visual">
-          <div class="file-card"><div class="file-symbol">TD</div><div class="file-name">my-document<span>.txtd</span></div><div class="file-lock">⌑</div></div>
-          <div class="encrypt-line"><span></span><b>AES-256-GCM</b><span></span></div>
-          <div class="format-caption"><span class="caption-dot"></span> Автоматическое шифрование и открытие</div>
+          <div class="file-tile">
+            <span class="file-type">TD</span>
+            <span class="file-title">document<span>.txtd</span></span>
+            <span class="file-lock">⌑</span>
+          </div>
+
+          <div class="format-line">
+            <i></i><span>AES-256-GCM</span><i></i>
+          </div>
+
+          <small>TEXTDARK DOCUMENT</small>
         </div>
+
       </div>
-      <p class="security-note reveal"><strong>Небольшое предупреждение:</strong> все копии textDark используют общий встроенный ключ. Формат удобен для обмена файлами, но не предназначен для хранения паролей и особо конфиденциальных данных.</p>
+
+      <p class="format-note reveal">
+        Важно: все копии приложения используют общий встроенный ключ.
+        Не храни в .txtd пароли и особо конфиденциальные данные.
+      </p>
+
     </section>
 
-    <section class="download-section section" id="download">
-      <div class="download-panel reveal">
-        <div class="download-orb" aria-hidden="true"></div>
-        <span class="section-tag">Можно начинать</span>
-        <h2>Твой следующий<br /><span>чистый лист.</span></h2>
-        <p>Скачай textDark 3.1 и попробуй сам. Приложение собрано в один EXE-файл для Windows x64.</p>
-        <a class="button button-primary button-big" href="https://github.com/mrsiktyyy/textDark/releases/download/3.2/textDark.exe" download>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14" /></svg>
-          Скачать textDark 3.1
-        </a>
-        <div class="download-footnote">Windows x64 <span>·</span> Бесплатно <span>·</span> Версия 3.1</div>
+    <!-- FAQ -->
+    <section class="section faq-section" id="faq">
+
+      <div class="section-heading reveal">
+        <div>
+          <span class="section-kicker">04 / КОРОТКО О ГЛАВНОМ</span>
+          <h2>Частые<br><span>вопросы.</span></h2>
+        </div>
+      </div>
+
+      <div class="faq-list reveal">
+
+        <details>
+          <summary>Для какой системы подходит textDark?<span>＋</span></summary>
+          <p>Для Windows 10 и 11, 64-bit.</p>
+        </details>
+
+        <details>
+          <summary>Нужна ли установка?<span>＋</span></summary>
+          <p>Нет. Скачай EXE-файл и запусти его.</p>
+        </details>
+
+        <details>
+          <summary>Можно ли использовать как обычный блокнот?<span>＋</span></summary>
+          <p>Да. В настройках можно выбрать режим «Блокнот».</p>
+        </details>
+
       </div>
     </section>
+
+    <!-- Финальный блок -->
+    <section class="final-section">
+      <div class="final-panel reveal">
+
+        <span class="section-kicker">TEXTDARK 3.2</span>
+
+        <h2>Открой. Напиши.<br><span>Сохрани.</span></h2>
+        <p>Твой текст — в центре внимания.</p>
+
+        <div class="final-actions">
+          <a class="button button-primary"
+             href="https://github.com/mrsiktyyy/textDark/releases/download/3.2/textDark.exe">
+            <span class="button-icon">↓</span>
+            Скачать textDark 3.2
+          </a>
+
+          <a class="button button-secondary"
+             href="https://github.com/mrsiktyyy/textDark"
+             target="_blank" rel="noreferrer">
+            GitHub <span class="arrow">↗</span>
+          </a>
+        </div>
+
+      </div>
+    </section>
+
   </main>
 
   <footer class="footer">
-    <a class="brand footer-brand" href="#home"><span class="brand-mark"><img src="./assets/logo.svg" alt="" width="28" height="28" /></span><span>text<span class="brand-light">Dark</span></span></a>
-    <span class="footer-copy">Сделано с вниманием к деталям.</span>
-    <div class="footer-links"><a href="https://github.com/mrsiktyyy/textDark" target="_blank" rel="noreferrer">GitHub ↗</a><a href="https://github.com/mrsiktyyy" target="_blank" rel="noreferrer">Автор ↗</a></div>
-    <span class="copyright">© 2026 textDark</span>
+
+    <a class="brand" href="#home">
+      <span class="brand-mark">
+        <img src="./assets/logo.svg" alt="" width="25" height="25">
+      </span>
+      <span>text<span class="brand-light">Dark</span></span>
+    </a>
+
+    <span class="footer-note">Меньше шума. Больше дела.</span>
+    <span class="copyright">© 2026 textDark · v3.2</span>
+
   </footer>
 
-  <script src="./script.js?v=3" defer></script>
+  <script src="./script.js?v=4" defer></script>
 </body>
 </html>
